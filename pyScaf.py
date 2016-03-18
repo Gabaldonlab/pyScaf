@@ -619,19 +619,30 @@ class SyntenyGraph(Graph):
         t2hits = self._clean_overlaps_on_reference(t2hits)
         return t2hits, t2size
         
-    def _lastal(self):
+    def _lastal(self, query=''):
         """Start LAST in local mode"""
         # build db
         if not os.path.isfile(self.ref+".suf"):
             os.system("lastdb %s %s" % (self.ref, self.ref))
+        # select query
+        if not query:
+            query = self.genome
         # run LAST aligner, split and maf-convert in pipe
-        args1 = ["lastal", "-P", str(self.threads), self.ref, self.genome]
+        args1 = ["lastal", "-P", str(self.threads), self.ref, query]
         proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stderr=sys.stderr)
         args2 = ["last-split", "-"]
         proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
         args3 = ["maf-convert", "tab", "-"]
         proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=sys.stderr)
         return proc3.stdout
+
+    def save_dotplot(self, query, extension="png", log=sys.stderr):
+        """Produce query to reference dotplot"""
+        outfn = "%s.%s"%(query, extension)
+        self.logger("Saving dotplots to: %s\n"%outfn)
+        args = ["last-dotplot", "-", outfn]
+        proc = subprocess.Popen(args, stdin=self._lastal(query), stderr=log)
+        proc.wait()
 
     def _get_best_global_match(self, hits):
         """Return best, longest match for given q-t pair"""
@@ -783,6 +794,8 @@ def main():
                         help="max no. of threads to run [%(default)s]")
     parser.add_argument("--log", default=sys.stderr, type=argparse.FileType('w'), 
                         help="output log to [stderr]")
+    parser.add_argument("--dotplot", default="png", choices=["", "png", ],
+                        help="generate dotplot as [%(default)s]")
     
     refo = parser.add_argument_group('Reference-based scaffolding options')
     refo.add_argument("-r", "--ref", "--reference", default='', 
@@ -855,7 +868,11 @@ def main():
                          maxgap=o.maxgap, threads=o.threads,
                          norearrangements=o.norearrangements, log=log)
         # save output
-        s.save(out=open(fasta+".scaffolds.ref.fa", "w"))
+        outfn = fasta+".scaffolds.ref.fa"
+        s.save(out=open(outfn, "w"))
+        if o.dotplot:
+            s.save_dotplot(outfn, o.dotplot)
+        s.logger("Done!\n")
 
 if __name__=='__main__': 
     t0 = datetime.now()
