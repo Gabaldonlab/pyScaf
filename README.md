@@ -49,6 +49,40 @@ Runs took ~0.5 min for CANPA on `4 CPUs` and ~2 min for ARATH on `16 CPUs`.
 
 ## Parameters
 
+Given reference genome, the program generates pairwise genome alignment (dotplots) by default. 
+
+- Genral options:
+```
+  -h, --help            show this help message and exit
+  -f FASTA, --fasta FASTA
+                        assembly FASTA file
+  -t THREADS, --threads THREADS
+                        max no. of threads to run [4]
+  --log LOG             output log to [stderr]
+  --dotplot {,png}      generate dotplot as [png]
+  --version             show program's version number and exit
+```
+- Reference-based scaffolding options:
+```
+  -r REF, --ref REF, --reference REF
+                        reference FASTA file
+  --identity IDENTITY   min. identity [0.33]
+  --overlap OVERLAP     min. overlap  [0.66]
+  -g MAXGAP, --maxgap MAXGAP
+                        max. distance between adjacent contigs [0.02 * assembly_size]
+  --norearrangements    high identity mode (rearrangements not allowed)
+```
+- NGS-based scaffolding options:
+```
+  -i FASTQ [FASTQ ...], --fastq FASTQ [FASTQ ...]
+                        FASTQ PE/MP files
+  -j JOINS, --joins JOINS
+                        min pairs to join contigs [5]
+  -a LINKRATIO, --linkratio LINKRATIO
+                        max link ratio between two best contig pairs [0.7]
+  -l LOAD, --load LOAD  align subset of reads [0.2]
+  -q MAPQ, --mapq MAPQ  min mapping quality [10]
+```
 
 ## Test run
 To perform reference-based assembly, provide assembled contigs and reference genome in FastA format.
