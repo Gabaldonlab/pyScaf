@@ -45,5 +45,7 @@ Runs took ~0.5 min for CANPA on `4 CPUs` and ~2 min for ARATH on `16 CPUs`.
 ```
 
 ## Proof-of-concept
-
+pyScaf is under heavy development right now.
+Nevertheless, the reference-based mode is functional and produces meaningful assemblies.
+For more info, have a look in [workbook](https://docs.google.com/document/d/1WNw6FYZXNI2sKJ1hBZ0LI9CWJSQ-BTQID7jL9lLvYaA/edit?usp=sharing).
 
