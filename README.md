@@ -1,13 +1,13 @@
 ### Table of Contents
 - **[Scaffolding modes](#scaffolding-modes)**
   - **[NGS-based scaffolding](#ngs-based-scaffolding)**
-  - **[Scaffolding based on long reads](#scaffolding-based-on-long-reads)
+  - **[Scaffolding based on long reads](#scaffolding-based-on-long-reads)**
   - **[Reference-based scaffolding](#reference-based-scaffolding)**
 - **[Usage](#usage)**
   - **[Prerequisites](#prerequisites)**  
   - **[Parameters](#parameters)**  
   - **[Test run](#test-run)**  
-- [Proof of concept](#proof-of-concept)
+- **[Proof of concept](#proof-of-concept)**
 
 # pyScaf
 
@@ -42,8 +42,6 @@ Runs took ~0.5 min for CANPA on `4 CPUs` and ~2 min for ARATH on `16 CPUs`.
 - pyScaf deals with large rearrangements ie. deletions, insertion, inversions, translocations. **Note however, this is experimental implementation!**
 - Consider closing gaps after scaffolding. 
 
-
-
 # Usage
 
 ## Prerequisites
@@ -53,9 +51,18 @@ Runs took ~0.5 min for CANPA on `4 CPUs` and ~2 min for ARATH on `16 CPUs`.
 
 
 ## Test run
+To perform reference-based assembly, provide assembled contigs and reference genome in FastA format.
 
 ```bash
-./pyScaf.py -f test/run1/contigs.reduced.fa -r test/ref.fa
+# scaffold homogenised assembly (reduced contigs)
+pyScaf.py -f test/contigs.reduced.fa -r test/ref.fa
+
+# scaffold reduced contigs using global mode (no norearrangements allowed)
+pyScaf.py -f test/contigs.reduced.fa -r test/ref.fa --norearrangements
+
+# scaffold heterozygous assembly (de novo assembled contigs)
+pyScaf.py -f test/contigs.fa -r test/ref.fa
+
 ```
 
 ## Proof of concept

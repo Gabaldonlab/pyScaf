@@ -505,7 +505,7 @@ class ReadGraph(Graph):
 class SyntenyGraph(Graph):
     """Graph class to represent scaffolds derived from synteny information"""
     def __init__(self, genome, reference, identity=0.51, overlap=0.66, norearrangements=0, 
-                 threads=4, mingap=15, maxgap=0, printlimit=10, log=sys.stderr):
+                 threads=4, mingap=15, maxgap=0, dotplot="png", printlimit=10, log=sys.stderr):
         """Construct a graph with the given vertices & features"""
         self.name = "ReferenceGraph"
         self.log = log
@@ -521,10 +521,12 @@ class SyntenyGraph(Graph):
         self.identity = identity
         self.overlap  = overlap
         self.threads  = threads
+        self.dotplot  = dotplot
         # 0-local alignment; 
         if norearrangements:
             # 1-global/overlap - simpler and faster
             self._get_hits = self._get_hits_global
+            self._lastal   = self._lastal_global # needed by save_dotplot
         # scaffolding options
         self.mingap  = mingap
         self._set_maxgap(maxgap)
@@ -541,14 +543,17 @@ class SyntenyGraph(Graph):
         self.maxgap = maxgap
         self.log.write(" maxgap cut-off of %s bp\n"%self.maxgap)
 
-    def _lastal_global(self):
+    def _lastal_global(self, query=''):
         """Start LAST in overlap mode. Slightly faster than local mode,
         but much less sensitive."""
         # build db
         if not os.path.isfile(self.ref+".suf"):
             os.system("lastdb %s %s" % (self.ref, self.ref))
+        # select query
+        if not query:
+            query = self.genome
         # run LAST
-        args = ["lastal", "-T", "1", "-f", "TAB", "-P", str(self.threads), self.ref, self.genome]
+        args = ["lastal", "-T", "1", "-f", "TAB", "-P", str(self.threads), self.ref, query]
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=sys.stderr)
         return proc.stdout
 
@@ -574,12 +579,17 @@ class SyntenyGraph(Graph):
 
     def _get_hits_global(self):
         """Resolve & report scaffolds"""
+        dotplot = None
+        if self.dotplot:
+            dotplot = self.save_dotplot(self.genome, readstdin=True)
         ## consider splitting into two functions
         ## to facilitate more input formats
         t2hits = {}
         t2size = {}
         q2hits = {}
         for l in self._lastal_global():
+            if dotplot:
+                dotplot.stdin.write(l)
             if l.startswith('#'):
                 continue
             # unpack
@@ -636,13 +646,16 @@ class SyntenyGraph(Graph):
         proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=sys.stderr)
         return proc3.stdout
 
-    def save_dotplot(self, query, extension="png", log=sys.stderr):
+    def save_dotplot(self, query, readstdin=False, log=open('/dev/null','w')): #sys.stderr):
         """Produce query to reference dotplot"""
-        outfn = "%s.%s"%(query, extension)
-        self.logger("Saving dotplots to: %s\n"%outfn)
+        outfn = "%s.%s"%(query, self.dotplot)
+        self.logger("Saving dotplots to: %s\n"%outfn) 
         args = ["last-dotplot", "-", outfn]
-        proc = subprocess.Popen(args, stdin=self._lastal(query), stderr=log)
-        proc.wait()
+        if readstdin:
+            proc = subprocess.Popen(args, stdin=subprocess.PIPE, stderr=log)
+        else:
+            proc = subprocess.Popen(args, stdin=self._lastal(query), stderr=log)
+        return proc
 
     def _get_best_global_match(self, hits):
         """Return best, longest match for given q-t pair"""
@@ -657,7 +670,7 @@ class SyntenyGraph(Graph):
         newHits = sorted(newHits, key=lambda x: sum(y[1] for y in x), reverse=1)
         return newHits[0]
         
-    def _calculat_global_algs(self, t2hits):
+    def _calculate_global_algs(self, t2hits):
         """Return simplified, global alignments"""
         t2hits2 = {}
         for t in t2hits:
@@ -691,11 +704,16 @@ class SyntenyGraph(Graph):
         
     def _get_hits(self):
         """Resolve & report scaffolds"""
+        dotplot = None
+        if self.dotplot:
+            dotplot = self.save_dotplot(self.genome, readstdin=True)
         ## consider splitting into two functions
         ## to facilitate more input formats
         t2hits, t2size = {}, {}
         q2hits = {}
         for l in self._lastal():
+            if dotplot:
+                dotplot.stdin.write(l)
             if l.startswith('#'):
                 continue
             # unpack
@@ -717,7 +735,7 @@ class SyntenyGraph(Graph):
             q2hits[q].append((qstart, qalg, strand, t, tstart, talg))
 
         # get simplified global alignments
-        t2hits = self._calculat_global_algs(t2hits)
+        t2hits = self._calculate_global_algs(t2hits)
         #for t, hits in t2hits.iteritems(): print t, hits
 
         # clean overlaps on reference
@@ -865,13 +883,13 @@ def main():
     if o.ref:
         # init
         s = SyntenyGraph(fasta, o.ref, identity=o.identity, overlap=o.overlap, \
-                         maxgap=o.maxgap, threads=o.threads,
+                         maxgap=o.maxgap, threads=o.threads, dotplot=o.dotplot,
                          norearrangements=o.norearrangements, log=log)
         # save output
         outfn = fasta+".scaffolds.ref.fa"
         s.save(out=open(outfn, "w"))
         if o.dotplot:
-            s.save_dotplot(outfn, o.dotplot)
+            s.save_dotplot(outfn).wait()
         s.logger("Done!\n")
 
 if __name__=='__main__': 
