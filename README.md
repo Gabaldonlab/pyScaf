@@ -52,6 +52,7 @@ Runs took ~0.5 min for CANPA on `4 CPUs` and ~2 min for ARATH on `16 CPUs`.
 
 ## Test run
 To perform reference-based assembly, provide assembled contigs and reference genome in FastA format.
+Dotplots of below runs can be found in [docs](/docs). 
 
 ```bash
 # scaffold homogenised assembly (reduced contigs)
