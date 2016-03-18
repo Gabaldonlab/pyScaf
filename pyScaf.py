@@ -674,7 +674,7 @@ class SyntenyGraph(Graph):
                 # get strand correctly - by majority voting
                 strand = int(round( 1.0 * sum(x[4]*x[5] for x in hits) / qalg))
                 t2hits2[t].append((tstart, tend, q, qstart, qend, strand))
-                print t, tstart, tend, q, qstart, qend, strand, len(t2hits[t][q]), identity, overlap
+                #print t, tstart, tend, q, qstart, qend, strand, len(t2hits[t][q]), identity, overlap
                 
         return t2hits2
         
@@ -707,13 +707,13 @@ class SyntenyGraph(Graph):
 
         # get simplified global alignments
         t2hits = self._calculat_global_algs(t2hits)
-        for t, hits in t2hits.iteritems(): print t, hits
+        #for t, hits in t2hits.iteritems(): print t, hits
 
         # clean overlaps on reference
         t2hits = self._clean_overlaps_on_reference(t2hits)
 
-        print "after clean-up"
-        for t, hits in t2hits.iteritems(): print t, hits
+        #print "after clean-up"
+        #for t, hits in t2hits.iteritems(): print t, hits
         return t2hits, t2size
 
     def _estimate_gap(self, data, pdata):
@@ -809,11 +809,11 @@ def main():
                       help="min mapping quality [%(default)s]")
     
     # standard
-    parser.add_argument("-v", dest="verbose",  default=False, action="store_true", help="verbose")    
+    #parser.add_argument("-v", dest="verbose",  default=False, action="store_true", help="verbose")    
     parser.add_argument('--version', action='version', version='0.10a')   
     o = parser.parse_args()
-    if o.verbose:
-        o.log.write("Options: %s\n"%str(o))
+    #if o.verbose:
+    o.log.write("Options: %s\n"%str(o))
     
     # check logic
     if not o.ref and not o.fastq:

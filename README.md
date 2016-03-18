@@ -4,6 +4,10 @@
   - **[Scaffolding based on long reads](#scaffolding-based-on-long-reads)
   - **[Reference-based scaffolding](#reference-based-scaffolding)**
 - **[Usage](#usage)**
+  - **[Prerequisites](#prerequisites)**  
+  - **[Parameters](#parameters)**  
+  - **[Test run](#test-run)**  
+- [Proof of concept](#proof-of-concept)
 
 # pyScaf
 
@@ -38,13 +42,23 @@ Runs took ~0.5 min for CANPA on `4 CPUs` and ~2 min for ARATH on `16 CPUs`.
 - pyScaf deals with large rearrangements ie. deletions, insertion, inversions, translocations. **Note however, this is experimental implementation!**
 - Consider closing gaps after scaffolding. 
 
+
+
 # Usage
+
+## Prerequisites
+- [LAST v700+](http://last.cbrc.jp/)
+
+## Parameters
+
+
+## Test run
 
 ```bash
 ./pyScaf.py -f test/run1/contigs.reduced.fa -r test/ref.fa
 ```
 
-## Proof-of-concept
+## Proof of concept
 pyScaf is under heavy development right now.
 Nevertheless, the reference-based mode is functional and produces meaningful assemblies.
 For more info, have a look in [workbook](https://docs.google.com/document/d/1WNw6FYZXNI2sKJ1hBZ0LI9CWJSQ-BTQID7jL9lLvYaA/edit?usp=sharing).
