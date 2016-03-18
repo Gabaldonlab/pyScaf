@@ -812,7 +812,7 @@ def main():
                         help="max no. of threads to run [%(default)s]")
     parser.add_argument("--log", default=sys.stderr, type=argparse.FileType('w'), 
                         help="output log to [stderr]")
-    parser.add_argument("--dotplot", default="png", choices=["", "png", ],
+    parser.add_argument("--dotplot", default="png", choices=["", "png", "gif", "pdf"],
                         help="generate dotplot as [%(default)s]")
     
     refo = parser.add_argument_group('Reference-based scaffolding options')

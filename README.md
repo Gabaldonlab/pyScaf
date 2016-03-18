@@ -86,7 +86,8 @@ Given reference genome, the program generates pairwise genome alignment (dotplot
 
 ## Test run
 To perform reference-based assembly, provide assembled contigs and reference genome in FastA format.
-Dotplots of below runs can be found in [docs](/docs). 
+Dotplots of below runs can be found in [docs](/docs).
+If you wish to skip dotplot generation (ie. no X11 on your system), provide `--dotplot ''` parameter. 
 
 ```bash
 # scaffold homogenised assembly (reduced contigs)
