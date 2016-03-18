@@ -504,7 +504,7 @@ class ReadGraph(Graph):
                     
 class SyntenyGraph(Graph):
     """Graph class to represent scaffolds derived from synteny information"""
-    def __init__(self, genome, reference, identity=0.51, overlap=0.66, norearangements=0, 
+    def __init__(self, genome, reference, identity=0.51, overlap=0.66, norearrangements=0, 
                  threads=4, mingap=15, maxgap=0, printlimit=10, log=sys.stderr):
         """Construct a graph with the given vertices & features"""
         self.name = "ReferenceGraph"
@@ -522,7 +522,7 @@ class SyntenyGraph(Graph):
         self.overlap  = overlap
         self.threads  = threads
         # 0-local alignment; 
-        if norearangements:
+        if norearrangements:
             # 1-global/overlap - simpler and faster
             self._get_hits = self._get_hits_global
         # scaffolding options
@@ -579,7 +579,7 @@ class SyntenyGraph(Graph):
         t2hits = {}
         t2size = {}
         q2hits = {}
-        for l in self._lastal_overlap():
+        for l in self._lastal_global():
             if l.startswith('#'):
                 continue
             # unpack
