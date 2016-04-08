@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 desc="""Perform scaffolding of contigs using information from (in this order):
 - paired-end (PE) and/or mate-pair (MP) libraries (!!!NOT IMPLEMENTED YET!!!)
+- long reads
 - synteny to reference genome
 
 More info at: https://github.com/lpryszcz/pyScaf
@@ -142,6 +143,46 @@ class Graph(object):
         log.close()
         self.log.write(" %s bp in %s scaffolds. Details in %s\n"%(totsize, len(self.scaffolds), log.name))
         self.log.write("Scaffolds saved to: %s\n"%out.name)
+
+    ###
+    # SCAFFOLDING PART
+    def _populate_scaffold(self, links, pend, sid, scaffold, orientations, gaps, porientation):
+        """Add links to scaffold representation. Experimental!
+
+        !!!Plenty of work needed here!!!
+        """
+        # self.links[ref1][end1][(ref2, end2)] = (links, gap)
+        #ref, end, links, gap = links
+        ## there may be many connections now, but only one is processed so far!!!
+        #print links
+        for (ref, end), (links, gap) in links.iteritems():
+            break
+        # skip if already added
+        if ref in self.contig2scaffold:
+            return scaffold, orientations, gaps, porientation
+        # get orientation - get forward/reverse-complement signal by XOR
+        ## if previous is 1 (end) & current is (0) start & orientation is 0 (forward) --> keep forward orientation
+        orientation = (pend != end) != porientation
+        # store at the end if previous contig was F and pend 1
+        if porientation != pend:
+            scaffold.append(ref)
+            orientations.append(not orientation)
+            gaps.append(gap)
+        else:
+            scaffold.insert(0, ref)
+            orientations.insert(0, not orientation)
+            gaps.insert(0, gap)
+        # update contigs2scaffold info
+        self.contig2scaffold[ref] = sid
+        # populate further connections from another end
+        links = self.links[ref][abs(end-1)]
+        # skip if not links
+        if not links:
+            return scaffold, orientations, gaps, orientation
+        # populate further connections from another end
+        return self._populate_scaffold(links, end, sid, scaffold, orientations, gaps, orientation)
+
+        
         
 class ReadGraph(Graph):
     """Graph class to represent scaffolds derived from NGS libraries.
@@ -439,42 +480,6 @@ class ReadGraph(Graph):
                         
         ## make sure there are no circles
 
-    def _populate_scaffold(self, links, pend, sid, scaffold, orientations, gaps, porientation):
-        """Add links to scaffold representation. Experimental!
-
-        !!!Plenty of work needed here!!!
-        """
-        # self.links[ref1][end1][(ref2, end2)] = (links, gap)
-        #ref, end, links, gap = links
-        ## there may be many connections now, but only one is processed so far!!!
-        #print links
-        for (ref, end), (links, gap) in links.iteritems():
-            break
-        # skip if already added
-        if ref in self.contig2scaffold:
-            return scaffold, orientations, gaps, porientation
-        # get orientation - get forward/reverse-complement signal by XOR
-        ## if previous is 1 (end) & current is (0) start & orientation is 0 (forward) --> keep forward orientation
-        orientation = (pend != end) != porientation
-        # store at the end if previous contig was F and pend 1
-        if porientation != pend:
-            scaffold.append(ref)
-            orientations.append(not orientation)
-            gaps.append(gap)
-        else:
-            scaffold.insert(0, ref)
-            orientations.insert(0, not orientation)
-            gaps.insert(0, gap)
-        # update contigs2scaffold info
-        self.contig2scaffold[ref] = sid
-        # populate further connections from another end
-        links = self.links[ref][abs(end-1)]
-        # skip if not links
-        if not links:
-            return scaffold, orientations, gaps, orientation
-        # populate further connections from another end
-        return self._populate_scaffold(links, end, sid, scaffold, orientations, gaps, orientation)
-
     def _get_scaffolds(self):
         """Resolve & report scaffolds"""
         # simplify graph
@@ -501,7 +506,209 @@ class ReadGraph(Graph):
                 scaffold, orientations, gaps, porientation = self._populate_scaffold(links, end1, sid, scaffold, orientations, gaps, 0)
             # store
             self.scaffolds.append((scaffold, orientations, gaps))                    
-                    
+
+class LongReadGraph(Graph):
+    """Graph class to represent scaffolds derived from long read information"""
+    def __init__(self, genome, fastq, identity=0.51, overlap=0.66, norearrangements=0, 
+                 threads=4, mingap=15, maxgap=0, printlimit=10, log=sys.stderr):
+        """Construct a graph with the given vertices & features"""
+        self.name = "ReferenceGraph"
+        self.log = log
+        self.printlimit = printlimit
+        # vars
+        self.genome = genome
+        self.ref = self.genome
+        self.fastq = fastq
+        # prepare storage
+        self._init_storage(genome)
+        # alignment options
+        self.identity = identity
+        self.overlap  = overlap
+        self.threads  = threads
+        #self.dotplot  = dotplot
+        # scaffolding options
+        self.mingap  = mingap
+        self._set_maxgap(maxgap)
+        self.maxoverhang = 0.1
+        
+    def _set_maxgap(self, maxgap=0, frac=0.01, min_maxgap=10000):
+        """Set maxgap to 0.01 of assembly size, 0.01 of assembly size"""
+        # set to 0.01 of assembly size
+        if not maxgap:
+            maxgap = int(round(frac * sum(self.contigs.itervalues())))
+        # check if big enough
+        if maxgap < min_maxgap:
+            maxgap = min_maxgap
+        # set variable
+        self.maxgap = maxgap
+        self.log.write(" maxgap cut-off of %s bp\n"%self.maxgap)
+        
+    def _lastal(self, query=''):
+        """Start LAST in local mode and with FastQ input (-Q 1)."""
+        # build db
+        if not os.path.isfile(self.ref+".suf"):
+            os.system("lastdb %s %s" % (self.ref, self.ref))
+        # run LAST aligner, split and maf-convert in pipe
+        args0 = ["cat", ] + self.fastq
+        if self.fastq[0].endswith('.gz'):
+            args[0] = "zcat"
+        proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
+        args1 = ["lastal", "-Q", 1, "-P", str(self.threads), self.ref, "-"]
+        proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
+        args2 = ["last-split", "-"]
+        proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
+        args3 = ["maf-convert", "tab", "-"]
+        proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=sys.stderr)
+        return proc3.stdout
+
+    def _get_hits(self):
+        """Resolve & report scaffolds"""
+        # maybe instead of last-split, get longest, non-overlapping matches here
+        q2hits, q2size = {}, {}
+        for l in open('contigs.reduced.fa.tab7'): #self._lastal():
+            if l.startswith('#'):
+                continue
+            # unpack
+            (score, t, tstart, talg, tstrand, tsize, q, qstart, qalg, qstrand, qsize, blocks) = l.split()[:12]
+            (score, qstart, qalg, qsize, tstart, talg, tsize) = map(int, (score, qstart, qalg, qsize, tstart, talg, tsize))
+            if q not in q2hits:
+                q2hits[q] = []
+                q2size[q]  = qsize
+            # For - strand matches, coordinates in the reverse complement of the 2nd sequence are used.
+            strand = 0 # forward
+            if qstrand == "-":
+                # reverse -> adjust start
+                strand = 1 
+                qstart = qsize - qstart - qalg
+            q2hits[q].append((qstart, qalg, strand, t, tstart, talg))
+
+        return q2hits, q2size
+        
+    def _get_best_global_match(self, hits):
+        """Return best, longest match for given q-t pair"""
+        newHits = [[hits[0]]]
+        for hit in hits[1:]:
+            # break synteny if too large gap
+            #if hit[2]=='scaffold22|size195699': print hit, hit[0]-newHits[-1][-1][0]
+            if hit[0]-newHits[-1][-1][0] > self.maxgap:
+                newHits.append([])
+            newHits[-1].append(hit)
+        # sort by the longest consecutive alg
+        newHits = sorted(newHits, key=lambda x: sum(y[1] for y in x), reverse=1)
+        return newHits[0]
+        
+    def _hits2longlinks(self, q2hits, q2size, score=0):
+        """Filter alignments and populate links.
+
+        Skip: 
+        - long reads aligning to only one contig
+        - check read overlap
+        - mixed alignments ie c1, c2, c1, c2
+        - clearly wrong alignment ie c1s - c2s
+        """
+        for q in q2hits.keys():
+            qsize, hits = q2size[q], q2hits[q]
+            
+            # check if more than 2 contigs aligned
+            targets = set(t for qstart, qalg, strand, t, tstart, talg in hits)
+            if len(targets)<2:
+                continue
+                
+            # check if enough overlap
+            aligned = sum(qalg for qstart, qalg, strand, t, tstart, talg in hits)
+            if aligned < self.overlap*qsize:
+                continue
+
+            hits.sort()
+            print "\n".join("\t".join(map(str, (qsize, qstart, qalg, strand, "_".join(t.split("_")[:2]), tstart, talg, self.contigs[t]))) for qstart, qalg, strand, t, tstart, talg in hits) + "\n"
+            #continue
+            
+            # combine hits for the same pair
+            t2hits = {}
+            for qstart, qalg, strand, t, tstart, talg in hits:
+                if t not in t2hits:
+                    t2hits[t] = []
+                t2hits[t].append((tstart, talg, q, qstart, qalg, strand, score))
+
+            uhits = []
+            for t in t2hits:
+                # get best target hit
+                hits = self._get_best_global_match(sorted(t2hits[t]))
+                
+                # get global start & end
+                ## this needs work and bulletproofing!!!
+                tstart = hits[0][0]
+                tend   = hits[-1][0] + hits[-1][1]
+                qstart = hits[0][3]
+                qend   = hits[-1][3] + hits[-1][4]
+                # and report rearrangements
+                
+                # get strand correctly - by majority voting
+                strand = int(round( 1.0 * sum(x[4]*x[5] for x in hits) / qalg))
+                uhits.append((q, qstart, qend, strand, t, tstart, tend))
+                #print "\t".join(map(str, (t, tstart, tend, q, qstart, qend, strand)))
+
+            uhits = sorted(uhits, key=lambda x: x[1])
+            print "\t".join(map(str, uhits[0]))
+            for i, (q, qstart, qend, strand, t, tstart, tend) in enumerate(uhits[1:]):
+                dist = qstart - uhits[i][2]
+                c1, c2 = t, uhits[i][4]
+                # get contig orientation
+                end1, end2 = 0, 1
+                pos1 = tstart
+                if strand:
+                    end1 = 1
+                    pos1 = self.contigs[c1] - tend
+                pos2 = self.contigs[c2] - uhits[i][6]
+                if uhits[i][3]: 
+                    end2 = 0
+                    pos2 = uhits[i][5]
+                # calculate gap
+                gap = dist - pos1 + pos2
+                overhang = gap - dist
+                print "\t".join(map(str, (q, qstart, qend, strand, t, tstart, tend, gap)))
+                print " %s:%s %s -> %s:%s %s  %s  %s bp"%(c1, pos1, end1, c2, pos2, end2, dist, gap)
+                # skip if too big overhang on contig edge
+                if gap > self.maxgap or overhang > self.maxoverhang*(self.contigs[c1]+self.contigs[c2]):
+                    print " too big contig overhang (%s) or gap (%s)!\n"%(overhang, gap)
+                    continue
+                self._add_line(c1, c2, end1, end2, 1, gap)
+                self._add_line(c2, c1, end2, end1, 1, gap)
+            print 
+                
+    def _get_scaffolds(self):
+        """Resolve & report scaffolds"""
+        self.logger("Aligning long reads on contigs...\n")
+        # get best ref-match to each contig
+        q2hits, q2size = self._get_hits()
+
+        # get simplified global alignments
+        #self.longlinks = {c: [{}, {}] for c in self.contigs}
+        self._hits2longlinks(q2hits, q2size)
+        
+        # build scaffolds
+        self.scaffolds = []
+        self.contig2scaffold = {}
+        for ref1 in sorted(self.contigs, key=lambda x: self.contigs[x], reverse=1):
+            # skip if already added
+            if ref1 in self.contig2scaffold:
+                continue
+            # get scaffold id
+            sid = len(self.scaffolds)
+            self.contig2scaffold[ref1] = sid
+            # store scaffold and its orientation (0-forward, 1-reverse-complement) and gaps
+            ## consider blist instead of list!
+            scaffold, orientations, gaps = [ref1], [0], []
+            # populate scaffold with connections from both ends
+            for end1 in range(2):
+                links = self.links[ref1][end1]
+                if not links:
+                    continue
+                scaffold, orientations, gaps, porientation = self._populate_scaffold(links, end1, sid, scaffold, orientations, gaps, 0)
+            # store
+            self.scaffolds.append((scaffold, orientations, gaps))                    
+
+            
 class SyntenyGraph(Graph):
     """Graph class to represent scaffolds derived from synteny information"""
     def __init__(self, genome, reference, identity=0.51, overlap=0.66, norearrangements=0, 
@@ -589,7 +796,11 @@ class SyntenyGraph(Graph):
         q2hits = {}
         for l in self._lastal_global():
             if dotplot:
-                dotplot.stdin.write(l)
+                try:
+                    dotplot.stdin.write(l)
+                except:
+                    self.log.write("[WARNING] dotplot generation failed!\n")
+                    dotplot = None
             if l.startswith('#'):
                 continue
             # unpack
@@ -621,7 +832,9 @@ class SyntenyGraph(Graph):
             # For - strand matches, coordinates in the reverse complement of the 2nd sequence are used.
             strand = 0 # forward
             if qstrand == "-":
-                strand = 1 # reverse
+                # reverse
+                strand = 1 
+                qstart = qsize - qstart - qalg
             qend, tend = qstart + qalg, tstart + talg
             t2hits[t].append((tstart, tend, q, qstart, qend, strand))
 
@@ -713,7 +926,11 @@ class SyntenyGraph(Graph):
         q2hits = {}
         for l in self._lastal():
             if dotplot:
-                dotplot.stdin.write(l)
+                try:
+                    dotplot.stdin.write(l)
+                except:
+                    self.log.write("[WARNING] dotplot generation failed!\n")
+                    dotplot = None
             if l.startswith('#'):
                 continue
             # unpack
@@ -730,7 +947,9 @@ class SyntenyGraph(Graph):
             # For - strand matches, coordinates in the reverse complement of the 2nd sequence are used.
             strand = 0 # forward
             if qstrand == "-":
-                strand = 1 # reverse
+                # reverse -> adjust start
+                strand = 1 
+                qstart = qsize - qstart - qalg
             t2hits[t][q].append((tstart, talg, q, qstart, qalg, strand, score))
             q2hits[q].append((qstart, qalg, strand, t, tstart, talg))
 
@@ -823,9 +1042,13 @@ def main():
     refo.add_argument("--overlap",         default=0.66, type=float,
                       help="min. overlap  [%(default)s]")
     refo.add_argument("-g", "--maxgap",   default=0, type=int,
-                      help="max. distance between adjacent contigs [0.02 * assembly_size]")
+                      help="max. distance between adjacent contigs [0.01 * assembly_size]")
     refo.add_argument("--norearrangements", default=False, action='store_true', 
                       help="high identity mode (rearrangements not allowed)")
+    
+    scaf = parser.add_argument_group('long read-based scaffolding options')
+    scaf.add_argument("-n", "--longreads", nargs="+",
+                      help="FASTQ file(s) with PacBio/ONT reads")
     
     scaf = parser.add_argument_group('NGS-based scaffolding options (!NOT IMPLEMENTED!)')
     scaf.add_argument("-i", "--fastq", nargs="+",
@@ -847,14 +1070,16 @@ def main():
     o.log.write("Options: %s\n"%str(o))
     
     # check logic
-    if not o.ref and not o.fastq:
-        sys.stderr.write("Provide FastQ files or reference genome (or both)!")
+    if not o.ref and not o.fastq and not o.longreads:
+        sys.stderr.write("Provide FastQ files, reference genome and/or long reads!\n")
         sys.exit(1)
         
     # check if input files exists
     fnames = [o.fasta, o.ref]
     if o.fastq:
         fnames += o.fastq
+    if o.longreads:
+        fnames += o.longreads
     for fn in fnames: 
         if fn and not os.path.isfile(fn):
             sys.stderr.write("No such file: %s\n"%fn)
@@ -862,6 +1087,15 @@ def main():
             
     fasta = o.fasta
     log = o.log
+
+    # perform scaffolding using long reads
+    if o.longreads:
+        s = LongReadGraph(fasta, o.longreads, identity=o.identity, overlap=o.overlap, \
+                          maxgap=o.maxgap, threads=o.threads, 
+                          norearrangements=o.norearrangements, log=log)
+        # save output
+        s.save(out=open(fasta+".scaffolds.longreads.fa", "w"))
+        
     
     # perform PE/MP scaffolding if NGS provided
     if o.fastq:
