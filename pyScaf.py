@@ -155,8 +155,11 @@ class Graph(object):
         #ref, end, links, gap = links
         ## there may be many connections now, but only one is processed so far!!!
         #print links
-        for (ref, end), (links, gap) in links.iteritems():
-            break
+        links_sorted = sorted(links.iteritems(), key=lambda x: x[1][0], reverse=1)
+        if len(links_sorted)>1:
+            print " multi connections:", scaffold, links, "\n"
+        (ref, end), (links, gap) = links_sorted[0]
+        #for (ref, end), (links, gap) in links.iteritems(): break
         # skip if already added
         if ref in self.contig2scaffold:
             return scaffold, orientations, gaps, porientation
@@ -181,8 +184,6 @@ class Graph(object):
             return scaffold, orientations, gaps, orientation
         # populate further connections from another end
         return self._populate_scaffold(links, end, sid, scaffold, orientations, gaps, orientation)
-
-        
         
 class ReadGraph(Graph):
     """Graph class to represent scaffolds derived from NGS libraries.
@@ -530,6 +531,9 @@ class LongReadGraph(Graph):
         self.mingap  = mingap
         self._set_maxgap(maxgap)
         self.maxoverhang = 0.1
+        # store long links
+        self.longlinks = {c: [{}, {}] for c in self.contigs}
+        self.ilonglinks = 0
         
     def _set_maxgap(self, maxgap=0, frac=0.01, min_maxgap=10000):
         """Set maxgap to 0.01 of assembly size, 0.01 of assembly size"""
@@ -553,7 +557,7 @@ class LongReadGraph(Graph):
         if self.fastq[0].endswith('.gz'):
             args[0] = "zcat"
         proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stderr=sys.stderr)
-        args1 = ["lastal", "-Q", "1", "-r 6", "-q 4", "-P", str(self.threads), self.ref, "-"]
+        args1 = ["lastal", "-Q", "1", "-P", str(self.threads), self.ref, "-"]
         proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
         args2 = ["last-split", "-"]
         proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
@@ -565,7 +569,7 @@ class LongReadGraph(Graph):
         """Resolve & report scaffolds"""
         # maybe instead of last-split, get longest, non-overlapping matches here
         q2hits, q2size = {}, {}
-        for l in self._lastal(): #open('contigs.reduced.fa.tab7'): #
+        for l in self._lastal(): # open('contigs.reduced.fa.tab7'): #
             if l.startswith('#'):
                 continue
             # unpack
@@ -597,6 +601,25 @@ class LongReadGraph(Graph):
         newHits = sorted(newHits, key=lambda x: sum(y[1] for y in x), reverse=1)
         return newHits[0]
         
+    def _add_longread_line(self, ref1, ref2, end1, end2, gap):
+        """Add connection between contigs from long reads."""
+        if (ref2, end2) not in self.longlinks[ref1][end1]:
+            self.longlinks[ref1][end1][(ref2, end2)] = []
+            self.longlinks[ref2][end2][(ref1, end1)] = []
+        # store connection details
+        self.longlinks[ref1][end1][(ref2, end2)].append(gap)
+        self.longlinks[ref2][end2][(ref1, end1)].append(gap)
+        # update connection counter 
+        self.ilonglinks += 1
+
+    def _contained_hits(self, hits):
+        """Return True if cointaned hits ie A, B, A"""
+        added = set([hits[0][3]])
+        for i, (qstart, qalg, strand, t, tstart, talg) in enumerate(hits[1:]):
+            if t!=hits[i][3] and t in added:
+                return True
+            added.add(t)
+        
     def _hits2longlinks(self, q2hits, q2size, score=0):
         """Filter alignments and populate links.
 
@@ -618,10 +641,13 @@ class LongReadGraph(Graph):
             aligned = sum(qalg for qstart, qalg, strand, t, tstart, talg in hits)
             if aligned < self.overlap*qsize:
                 continue
-
+            
             hits.sort()
-            print "\n".join("\t".join(map(str, (qsize, qstart, qalg, strand, "_".join(t.split("_")[:2]), tstart, talg, self.contigs[t]))) for qstart, qalg, strand, t, tstart, talg in hits) + "\n"
-            #continue
+
+            # check if contained hit (ie A, B, A)
+            if self._contained_hits(hits):
+                print "contained hits", "\n".join("\t".join(map(str, (qsize, qstart, qalg, strand, "_".join(t.split("_")[:2]), tstart, talg, self.contigs[t]))) for qstart, qalg, strand, t, tstart, talg in hits) + "\n"
+                continue
             
             # combine hits for the same pair
             t2hits = {}
@@ -635,18 +661,23 @@ class LongReadGraph(Graph):
                 # get best target hit
                 hits = self._get_best_global_match(sorted(t2hits[t]))
                 
-                # get global start & end
-                ## this needs work and bulletproofing!!!
-                tstart = hits[0][0]
-                tend   = hits[-1][0] + hits[-1][1]
-                qstart = hits[0][3]
-                qend   = hits[-1][3] + hits[-1][4]
                 # and report rearrangements
                 
                 # get strand correctly - by majority voting
-                strand = int(round( 1.0 * sum(x[4]*x[5] for x in hits) / qalg))
+                talg   = sum(x[1] for x in hits)
+                strand = int(round(1.0 * sum(x[1]*x[5] for x in hits) / talg))
+                #if strand>1: self.log.write("[ERROR] Wrong strand from majority voting: %s %s\n"%(strand, str(hits)))
+
+                if strand:
+                    qstart = hits[-1][3]
+                    qend   = hits[0][3] + hits[0][4]
+                else:
+                    qstart = hits[0][3]
+                    qend   = hits[-1][3] + hits[-1][4]
+                # get global start & end
+                tstart = hits[0][0]
+                tend   = hits[-1][0] + hits[-1][1]
                 uhits.append((q, qstart, qend, strand, t, tstart, tend))
-                #print "\t".join(map(str, (t, tstart, tend, q, qstart, qend, strand)))
 
             uhits = sorted(uhits, key=lambda x: x[1])
             print "\t".join(map(str, uhits[0]))
@@ -672,9 +703,27 @@ class LongReadGraph(Graph):
                 if gap > self.maxgap or overhang > self.maxoverhang*(self.contigs[c1]+self.contigs[c2]):
                     print " too big contig overhang (%s) or gap (%s)!\n"%(overhang, gap)
                     continue
-                self._add_line(c1, c2, end1, end2, 1, gap)
-                self._add_line(c2, c1, end2, end1, 1, gap)
-            print 
+                self._add_longread_line(c1, c2, end1, end2, gap)
+            print
+                
+        # get links
+        self._get_links()
+        print self.ilonglinks, self.ilinks  
+                
+    def _get_links(self):
+        """Combine longlinks into links"""
+        for ref1 in self.longlinks:
+            for end1, data in enumerate(self.longlinks[ref1]):
+                for (ref2, end2), gaps in data.iteritems():
+                    if ref1 > ref2:
+                        continue
+                    links = len(gaps)
+                    gap = int(round(np.mean(gaps)))
+                    gapstd = np.std(gaps)
+                    if gapstd>100 and gapstd / gap > 0.25:
+                        print "highly variable gap size at %s %s -> %s %s: %s +- %.f %s"%(ref1, end1, ref2, end2, gap, gapstd, str(gaps))
+                    self._add_line(ref1, ref2, end1, end2, links, gap)
+                    self._add_line(ref2, ref1, end2, end1, links, gap)
                 
     def _get_scaffolds(self):
         """Resolve & report scaffolds"""
