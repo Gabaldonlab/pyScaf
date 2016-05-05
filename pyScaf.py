@@ -552,8 +552,8 @@ class LongReadGraph(Graph):
         args0 = ["cat", ] + self.fastq
         if self.fastq[0].endswith('.gz'):
             args[0] = "zcat"
-        proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
-        args1 = ["lastal", "-Q", 1, "-P", str(self.threads), self.ref, "-"]
+        proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stderr=sys.stderr)
+        args1 = ["lastal", "-Q", "1", "-r 6", "-q 4", "-P", str(self.threads), self.ref, "-"]
         proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
         args2 = ["last-split", "-"]
         proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
@@ -565,7 +565,7 @@ class LongReadGraph(Graph):
         """Resolve & report scaffolds"""
         # maybe instead of last-split, get longest, non-overlapping matches here
         q2hits, q2size = {}, {}
-        for l in open('contigs.reduced.fa.tab7'): #self._lastal():
+        for l in self._lastal(): #open('contigs.reduced.fa.tab7'): #
             if l.startswith('#'):
                 continue
             # unpack
