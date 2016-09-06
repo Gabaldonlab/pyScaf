@@ -555,7 +555,7 @@ class LongReadGraph(Graph):
         # run LAST aligner, split and maf-convert in pipe
         args0 = ["cat", ] + self.fastq
         if self.fastq[0].endswith('.gz'):
-            args[0] = "zcat"
+            args0[0] = "zcat"
         proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stderr=sys.stderr)
         args1 = ["lastal", "-Q", "1", "-P", str(self.threads), self.ref, "-"]
         proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)

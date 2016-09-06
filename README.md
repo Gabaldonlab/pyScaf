@@ -91,13 +91,13 @@ If you wish to skip dotplot generation (ie. no X11 on your system), provide `--d
 
 ```bash
 # scaffold homogenised assembly (reduced contigs)
-pyScaf.py -f test/contigs.reduced.fa -r test/ref.fa
+./pyScaf.py -f test/contigs.reduced.fa -r test/ref.fa
 
 # scaffold reduced contigs using global mode (no norearrangements allowed)
-pyScaf.py -f test/contigs.reduced.fa -r test/ref.fa --norearrangements
+./pyScaf.py -f test/contigs.reduced.fa -r test/ref.fa --norearrangements
 
 # scaffold heterozygous assembly (de novo assembled contigs)
-pyScaf.py -f test/contigs.fa -r test/ref.fa
+./pyScaf.py -f test/contigs.fa -r test/ref.fa
 
 ```
 
