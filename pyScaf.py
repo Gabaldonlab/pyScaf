@@ -1113,7 +1113,7 @@ def main():
     
     # standard
     #parser.add_argument("-v", dest="verbose",  default=False, action="store_true", help="verbose")    
-    parser.add_argument('--version', action='version', version='0.10a')   
+    parser.add_argument('--version', action='version', version='0.11b')   
     o = parser.parse_args()
     #if o.verbose:
     o.log.write("Options: %s\n"%str(o))
