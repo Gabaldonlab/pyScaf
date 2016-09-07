@@ -144,6 +144,67 @@ class Graph(object):
         self.log.write(" %s bp in %s scaffolds. Details in %s\n"%(totsize, len(self.scaffolds), log.name))
         self.log.write("Scaffolds saved to: %s\n"%out.name)
 
+    def save_dotplot(self, query, readstdin=False): # open('/dev/null','w')): #
+        """Produce query to reference dotplot"""
+        outfn = "%s.%s"%(query, self.dotplot)
+        self.logger("Saving dotplots to: %s\n"%outfn) 
+        args = ["last-dotplot", "-", outfn]
+        if readstdin:
+            proc = subprocess.Popen(args, stdin=subprocess.PIPE, stderr=self.log)
+        else:
+            proc = subprocess.Popen(args, stdin=self._lastal(query), stderr=self.log)
+        return proc
+
+    def _lastal(self, queries=[]):
+        """Start LAST in local mode and with FastQ input (-Q 1)."""
+        # build db
+        if not os.path.isfile(self.ref+".suf"):
+            os.system("lastdb %s %s" % (self.ref, self.ref))
+        # decide on input
+        if not queries:
+            queries = self.fastq
+        # convert filename to list of filenames
+        if type(queries) is str:
+            queries = [queries, ]
+        # run LAST aligner, split and maf-convert in pipe
+        seqformati = 1
+        args0 = ["cat", ] + queries
+        if queries[0].endswith('.gz'):
+            args0[0] = "zcat"
+            seqformati += 1
+        # deduce sequence format
+        seqformat = queries[0].split(".")[-seqformati].lower()
+        if seqformat in ("fasta", "fa"):
+            seqformatcode = "0" # FASTA
+        elif seqformat in ("fastq", "fq"):
+            seqformatcode = "1" # FastQ
+        else:
+            self.log.write("[WARNING] Unsupported sequence format `%s` in %s\n"%(seqformat, self.fastq[0]))
+            sys.exit(1)
+        # combine processes
+        proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stderr=sys.stderr)
+        args1 = ["lastal", "-Q", seqformatcode, "-P", str(self.threads), self.ref, "-"]
+        proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
+        args2 = ["last-split", "-"]
+        proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
+        args3 = ["maf-convert", "tab", "-"]
+        proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=sys.stderr)
+        return proc3.stdout
+
+    def _lastal_global(self, query=''):
+        """Start LAST in overlap mode. Slightly faster than local mode,
+        but much less sensitive."""
+        # build db
+        if not os.path.isfile(self.ref+".suf"):
+            os.system("lastdb %s %s" % (self.ref, self.ref))
+        # select query
+        if not query:
+            query = self.genome
+        # run LAST
+        args = ["lastal", "-T", "1", "-f", "TAB", "-P", str(self.threads), self.ref, query]
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=sys.stderr)
+        return proc.stdout
+
     ###
     # SCAFFOLDING PART
     def _populate_scaffold(self, links, pend, sid, scaffold, orientations, gaps, porientation):
@@ -190,7 +251,7 @@ class ReadGraph(Graph):
     
     It stores connections from paired alignments in self.readlinks. 
     """
-    def __init__(self, genome, mapq=10, load=0.2, threads=4, 
+    def __init__(self, genome, mapq=10, load=0.2, threads=4, dotplot="png", 
                  frac=1.5, mingap=15, ratio=0.75, minlinks=5,
                  log=sys.stderr, printlimit=10):
         self.name = "ReadGraph"
@@ -511,7 +572,7 @@ class ReadGraph(Graph):
 class LongReadGraph(Graph):
     """Graph class to represent scaffolds derived from long read information"""
     def __init__(self, genome, fastq, identity=0.51, overlap=0.66, norearrangements=0, 
-                 threads=4, mingap=15, maxgap=0, printlimit=10, log=sys.stderr):
+                 threads=4, dotplot="png", mingap=15, maxgap=0, printlimit=10, log=sys.stderr):
         """Construct a graph with the given vertices & features"""
         self.name = "ReferenceGraph"
         self.log = log
@@ -526,7 +587,7 @@ class LongReadGraph(Graph):
         self.identity = identity
         self.overlap  = overlap
         self.threads  = threads
-        #self.dotplot  = dotplot
+        self.dotplot  = dotplot
         # scaffolding options
         self.mingap  = mingap
         self._set_maxgap(maxgap)
@@ -547,36 +608,6 @@ class LongReadGraph(Graph):
         self.maxgap = maxgap
         self.log.write(" maxgap cut-off of %s bp\n"%self.maxgap)
         
-    def _lastal(self, query=''):
-        """Start LAST in local mode and with FastQ input (-Q 1)."""
-        # build db
-        if not os.path.isfile(self.ref+".suf"):
-            os.system("lastdb %s %s" % (self.ref, self.ref))
-        # run LAST aligner, split and maf-convert in pipe
-        seqformati = 1
-        args0 = ["cat", ] + self.fastq
-        if self.fastq[0].endswith('.gz'):
-            args0[0] = "zcat"
-            seqformati += 1
-        # deduce sequence format
-        seqformat = self.fastq[0].split(".")[-seqformati].lower()
-        if seqformat in ("fasta", "fa"):
-            seqformatcode = "0" # FASTA
-        elif seqformat in ("fastq", "fq"):
-            seqformatcode = "1" # FastQ
-        else:
-            self.log.write("[WARNING] Unsupported sequence format `%s` in %s\n"%(seqformat, self.fastq[0]))
-            sys.exit(1)
-        # combine processes
-        proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stderr=sys.stderr)
-        args1 = ["lastal", "-Q", seqformatcode, "-P", str(self.threads), self.ref, "-"]
-        proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
-        args2 = ["last-split", "-"]
-        proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
-        args3 = ["maf-convert", "tab", "-"]
-        proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=sys.stderr)
-        return proc3.stdout
-
     def _get_hits(self):
         """Resolve & report scaffolds"""
         # maybe instead of last-split, get longest, non-overlapping matches here
@@ -811,20 +842,6 @@ class SyntenyGraph(Graph):
         self.maxgap = maxgap
         self.log.write(" maxgap cut-off of %s bp\n"%self.maxgap)
 
-    def _lastal_global(self, query=''):
-        """Start LAST in overlap mode. Slightly faster than local mode,
-        but much less sensitive."""
-        # build db
-        if not os.path.isfile(self.ref+".suf"):
-            os.system("lastdb %s %s" % (self.ref, self.ref))
-        # select query
-        if not query:
-            query = self.genome
-        # run LAST
-        args = ["lastal", "-T", "1", "-f", "TAB", "-P", str(self.threads), self.ref, query]
-        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=sys.stderr)
-        return proc.stdout
-
     def _clean_overlaps_on_reference(self, _t2hits):
         """Remove hits that overlap on reference too much"""
         t2hits = {}
@@ -903,33 +920,6 @@ class SyntenyGraph(Graph):
         t2hits = self._clean_overlaps_on_reference(t2hits)
         return t2hits, t2size
         
-    def _lastal(self, query=''):
-        """Start LAST in local mode"""
-        # build db
-        if not os.path.isfile(self.ref+".suf"):
-            os.system("lastdb %s %s" % (self.ref, self.ref))
-        # select query
-        if not query:
-            query = self.genome
-        # run LAST aligner, split and maf-convert in pipe
-        args1 = ["lastal", "-P", str(self.threads), self.ref, query]
-        proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stderr=sys.stderr)
-        args2 = ["last-split", "-"]
-        proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
-        args3 = ["maf-convert", "tab", "-"]
-        proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=sys.stderr)
-        return proc3.stdout
-
-    def save_dotplot(self, query, readstdin=False, log=open('/dev/null','w')): #sys.stderr):
-        """Produce query to reference dotplot"""
-        outfn = "%s.%s"%(query, self.dotplot)
-        self.logger("Saving dotplots to: %s\n"%outfn) 
-        args = ["last-dotplot", "-", outfn]
-        if readstdin:
-            proc = subprocess.Popen(args, stdin=subprocess.PIPE, stderr=log)
-        else:
-            proc = subprocess.Popen(args, stdin=self._lastal(query), stderr=log)
-        return proc
 
     def _get_best_global_match(self, hits):
         """Return best, longest match for given q-t pair"""
@@ -1097,7 +1087,7 @@ def main():
     
     refo = parser.add_argument_group('Reference-based scaffolding options')
     refo.add_argument("-r", "--ref", "--reference", default='', 
-                      help="reference FASTA file")
+                      help="reference FastA file")
     refo.add_argument("--identity",        default=0.33, type=float,
                       help="min. identity [%(default)s]")
     refo.add_argument("--overlap",         default=0.66, type=float,
@@ -1109,7 +1099,7 @@ def main():
     
     scaf = parser.add_argument_group('long read-based scaffolding options')
     scaf.add_argument("-n", "--longreads", nargs="+",
-                      help="FASTQ file(s) with PacBio/ONT reads")
+                      help="FastQ/FastA file(s) with PacBio/ONT reads")
     
     scaf = parser.add_argument_group('NGS-based scaffolding options (!NOT IMPLEMENTED!)')
     scaf.add_argument("-i", "--fastq", nargs="+",
@@ -1153,28 +1143,32 @@ def main():
     # perform scaffolding using long reads
     if o.longreads:
         s = LongReadGraph(fasta, o.longreads, identity=o.identity, overlap=o.overlap, \
-                          maxgap=o.maxgap, threads=o.threads, 
+                          maxgap=o.maxgap, threads=o.threads, dotplot=o.dotplot, 
                           norearrangements=o.norearrangements, log=log)
         # save output
-        #s.save(out=open(fasta+".scaffolds.longreads.fa", "w"))
         s.save(out)
-
+        if o.dotplot:
+            s.save_dotplot(out.name).wait()
+        #fasta = fasta+".scaffolds.fa"
+            
     # perform PE/MP scaffolding if NGS provided
     elif o.fastq:
         # NOT IMPLEMENTED YET
         sys.stderr.write("NGS-based scaffolding is not implemented yet! Stay tuned :)\n"); sys.exit(1)
         # get library statistics
         # init
-        s = ReadGraph(fasta, mapq=o.mapq, load=o.load, threads=o.threads, log=log)
+        s = ReadGraph(fasta, mapq=o.mapq, load=o.load, threads=o.threads, dotplot=o.dotplot,
+                      log=log)
         # add library
         s.add_library(o.fastq, isize=600, stdev=100, orientation="FR"); s.show()
         # add another library
 
         # save output
         s.save(out)
-        #s.save(out=open(fasta+".scaffolds.fa", "w"))
+        if o.dotplot:
+            s.save_dotplot(out.name).wait()
         # update fasta at the end
-        fasta = fasta+".scaffolds.fa"
+        #fasta = fasta+".scaffolds.fa"
     
     # perform referece-based scaffolding only if ref provided
     elif o.ref:
@@ -1183,11 +1177,9 @@ def main():
                          maxgap=o.maxgap, threads=o.threads, dotplot=o.dotplot,
                          norearrangements=o.norearrangements, log=log)
         # save output
-        #outfn = fasta+".scaffolds.ref.fa"
-        #s.save(out=open(outfn, "w"))
         s.save(out)
         if o.dotplot:
-            s.save_dotplot(outfn).wait()
+            s.save_dotplot(out.name).wait()
         s.logger("Done!\n")
 
 if __name__=='__main__': 

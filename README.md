@@ -91,14 +91,27 @@ If you wish to skip dotplot generation (ie. no X11 on your system), provide `--d
 
 ```bash
 # scaffold homogenised assembly (reduced contigs)
-./pyScaf.py -f test/contigs.reduced.fa -r test/ref.fa
+./pyScaf.py -f test/contigs.reduced.fa -r test/ref.fa -o test/contigs.reduced.ref.fa
 
 # scaffold reduced contigs using global mode (no norearrangements allowed)
-./pyScaf.py -f test/contigs.reduced.fa -r test/ref.fa --norearrangements
+./pyScaf.py -f test/contigs.reduced.fa -r test/ref.fa -o test/contigs.reduced.ref.global.fa --norearrangements
 
 # scaffold heterozygous assembly (de novo assembled contigs)
-./pyScaf.py -f test/contigs.fa -r test/ref.fa
+./pyScaf.py -f test/contigs.fa -r test/ref.fa -o test/contigs.ref.fa
 
+# scaffold reduced contigs using long reads
+## pacbio
+./pyScaf.py -f test/contigs.reduced.fa -n test/pacbio.fq.gz -o test/contigs.reduced.pacbio.fa > test/contigs.reduced.pacbio.fa.log
+## nanopore
+./pyScaf.py -f test/contigs.reduced.fa -n test/nanopore.fa.gz -o test/contigs.reduced.nanopore.fa > test/contigs.reduced.nanopore.fa.log
+
+# generate dotplot
+lastdb test/ref.fa
+lastal -f TAB test/ref.fa test/contigs.reduced.pacbio.fa | last-dotplot - test/contigs.reduced.pacbio.fa.ref.png
+lastal -f TAB test/ref.fa test/contigs.reduced.nanopore.fa | last-dotplot - test/contigs.reduced.nanopore.fa.ref.png
+
+# clean-up
+#rm test/contigs.{,reduced.}fa.* test/ref.fa.* test/*.{nanopore,pacbio,ref}* test/*.log
 ```
 
 ## Proof of concept
