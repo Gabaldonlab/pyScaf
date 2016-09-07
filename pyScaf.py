@@ -919,7 +919,6 @@ class SyntenyGraph(Graph):
         # remove q that overlap too much on t
         t2hits = self._clean_overlaps_on_reference(t2hits)
         return t2hits, t2size
-        
 
     def _get_best_global_match(self, hits):
         """Return best, longest match for given q-t pair"""
@@ -975,7 +974,7 @@ class SyntenyGraph(Graph):
         ## to facilitate more input formats
         t2hits, t2size = {}, {}
         q2hits = {}
-        for l in self._lastal():
+        for l in self._lastal(self.genome):
             if dotplot:
                 try:
                     dotplot.stdin.write(l)
