@@ -1,6 +1,7 @@
 	### 0.11b
     - long read-based scaffolding
         - added simulated pacbio reads (CLR, 10X)
+    - added support for long reads in FastA
         
 	### 0.11a
 	- reference-based scaffolding
