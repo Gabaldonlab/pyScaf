@@ -553,11 +553,23 @@ class LongReadGraph(Graph):
         if not os.path.isfile(self.ref+".suf"):
             os.system("lastdb %s %s" % (self.ref, self.ref))
         # run LAST aligner, split and maf-convert in pipe
+        seqformati = 1
         args0 = ["cat", ] + self.fastq
         if self.fastq[0].endswith('.gz'):
             args0[0] = "zcat"
+            seqformati += 1
+        # deduce sequence format
+        seqformat = self.fastq[0].split(".")[-seqformati].lower()
+        if seqformat in ("fasta", "fa"):
+            seqformatcode = "0" # FASTA
+        elif seqformat in ("fastq", "fq"):
+            seqformatcode = "1" # FastQ
+        else:
+            self.log.write("[WARNING] Unsupported sequence format `%s` in %s\n"%(seqformat, self.fastq[0]))
+            sys.exit(1)
+        # combine processes
         proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stderr=sys.stderr)
-        args1 = ["lastal", "-Q", "1", "-P", str(self.threads), self.ref, "-"]
+        args1 = ["lastal", "-Q", seqformatcode, "-P", str(self.threads), self.ref, "-"]
         proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
         args2 = ["last-split", "-"]
         proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
@@ -1074,8 +1086,8 @@ def main():
   
     parser.add_argument("-f", "--fasta", required=1, 
                         help="assembly FASTA file")
-    #parser.add_argument("-o", "--outdir",  default="redundans", 
-    #                    help="output directory [%(default)s]")
+    parser.add_argument("-o", "--output", default="scaffolds.fa", type=argparse.FileType('w'), 
+                        help="output stream [%(default)s]")
     parser.add_argument("-t", "--threads", default=4, type=int, 
                         help="max no. of threads to run [%(default)s]")
     parser.add_argument("--log", default=sys.stderr, type=argparse.FileType('w'), 
@@ -1135,6 +1147,7 @@ def main():
             sys.exit(1)
             
     fasta = o.fasta
+    out = o.output
     log = o.log
 
     # perform scaffolding using long reads
@@ -1143,11 +1156,11 @@ def main():
                           maxgap=o.maxgap, threads=o.threads, 
                           norearrangements=o.norearrangements, log=log)
         # save output
-        s.save(out=open(fasta+".scaffolds.longreads.fa", "w"))
-        
-    
+        #s.save(out=open(fasta+".scaffolds.longreads.fa", "w"))
+        s.save(out)
+
     # perform PE/MP scaffolding if NGS provided
-    if o.fastq:
+    elif o.fastq:
         # NOT IMPLEMENTED YET
         sys.stderr.write("NGS-based scaffolding is not implemented yet! Stay tuned :)\n"); sys.exit(1)
         # get library statistics
@@ -1158,19 +1171,21 @@ def main():
         # add another library
 
         # save output
-        s.save(out=open(fasta+".scaffolds.fa", "w"))
+        s.save(out)
+        #s.save(out=open(fasta+".scaffolds.fa", "w"))
         # update fasta at the end
         fasta = fasta+".scaffolds.fa"
     
     # perform referece-based scaffolding only if ref provided
-    if o.ref:
+    elif o.ref:
         # init
         s = SyntenyGraph(fasta, o.ref, identity=o.identity, overlap=o.overlap, \
                          maxgap=o.maxgap, threads=o.threads, dotplot=o.dotplot,
                          norearrangements=o.norearrangements, log=log)
         # save output
-        outfn = fasta+".scaffolds.ref.fa"
-        s.save(out=open(outfn, "w"))
+        #outfn = fasta+".scaffolds.ref.fa"
+        #s.save(out=open(outfn, "w"))
+        s.save(out)
         if o.dotplot:
             s.save_dotplot(outfn).wait()
         s.logger("Done!\n")
