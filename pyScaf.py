@@ -47,13 +47,16 @@ class Graph(object):
         self.printlimit = printlimit
         self.ilinks  = 0
 
-    def logger(self, mssg=""):
+    def logger(self, mssg="", timestamp=1):
         """Logging function."""
         head = "\n%s"%("#"*50,)
         timestamp = "\n[%s]"% datetime.ctime(datetime.now())
         memusage  = "[%5i Mb] "%(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024, )
         if self.log:
-            self.log.write("".join((head, timestamp, memusage, mssg)))
+            if timestamp:
+                self.log.write("".join((head, timestamp, memusage, mssg)))
+            else:
+                self.log.write(mssg)
         
     def shorter(self, v, i=4, sep="_"):
         """Return shortened contig name"""
@@ -141,8 +144,8 @@ class Graph(object):
         # close output & loge
         out.close()
         log.close()
-        self.log.write(" %s bp in %s scaffolds. Details in %s\n"%(totsize, len(self.scaffolds), log.name))
-        self.log.write("Scaffolds saved to: %s\n"%out.name)
+        self.logger(" %s bp in %s scaffolds. Details in %s\n"%(totsize, len(self.scaffolds), log.name), 0)
+        self.logger("Scaffolds saved to: %s\n"%out.name, 0)
 
     def save_dotplot(self, query, readstdin=False): # open('/dev/null','w')): #
         """Produce query to reference dotplot"""
@@ -179,7 +182,7 @@ class Graph(object):
         elif seqformat in ("fastq", "fq"):
             seqformatcode = "1" # FastQ
         else:
-            self.log.write("[WARNING] Unsupported sequence format `%s` in %s\n"%(seqformat, self.fastq[0]))
+            self.logger("[WARNING] Unsupported sequence format `%s` in %s\n"%(seqformat, self.fastq[0]), 0)
             sys.exit(1)
         # combine processes
         proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stderr=sys.stderr)
@@ -218,7 +221,7 @@ class Graph(object):
         #print links
         links_sorted = sorted(links.iteritems(), key=lambda x: x[1][0], reverse=1)
         if len(links_sorted)>1:
-            print " multi connections:", scaffold, links, "\n"
+            self.logger(" multi connections: %s %s\n"%(scaffold, links), 0)
         (ref, end), (links, gap) = links_sorted[0]
         #for (ref, end), (links, gap) in links.iteritems(): break
         # skip if already added
@@ -306,8 +309,7 @@ class ReadGraph(Graph):
         """Return True if v in present in the graph"""
         if c in self.readlinks:
             return True
-        if self.log:
-            self.log.write("[WARNING] %s not in contigs!\n"%c)
+        self.logger("[WARNING] %s not in contigs!\n"%c, 0)
             
     def _get_distance_FR(self, ref, pos, flag):
         """Return True if distance from the v end is smaller that frac * isize"""
@@ -515,12 +517,12 @@ class ReadGraph(Graph):
         elif orientation in (2, "RF"):
             self.get_distance = self._get_distance_RF
         else:
-            self.log.write("[WARNING] Provided orientation (%s) is not supported!\n"%orientation)
+            self.logger("[WARNING] Provided orientation (%s) is not supported!\n"%orientation, 0)
         # set parameters
         self.maxdist = self.isize + self.frac * self.stdev
         self.rlen = None
         # run alignments; parse alignments & get links
-        #self.log.write(" Library stats...\n")
+        #self.logger(" Library stats...\n", 0)
         handle = self._bwamem(fastqs)
         self.load_from_SAM(handle)
         self.get_links()
@@ -536,7 +538,7 @@ class ReadGraph(Graph):
                 for (ref2, end2), (links, gap) in self.links[ref1][end1].items(): 
                     if not (ref1, end1) in self.links[ref2][end2]:
                         # remove link and update counter
-                        #self.log.write("Removing connection %s -> %s\n"%(str((ref1, end1)), str((ref2, end2))))
+                        #self.logger("Removing connection %s -> %s\n"%(str((ref1, end1)), str((ref2, end2))), 0)
                         self.links[ref1][end1].pop((ref2, end2))
                         self.ilinks -= 1
                         
@@ -606,7 +608,7 @@ class LongReadGraph(Graph):
             maxgap = min_maxgap
         # set variable
         self.maxgap = maxgap
-        self.log.write(" maxgap cut-off of %s bp\n"%self.maxgap)
+        self.logger(" maxgap cut-off of %s bp\n"%self.maxgap, 0)
         
     def _get_hits(self):
         """Resolve & report scaffolds"""
@@ -689,7 +691,7 @@ class LongReadGraph(Graph):
 
             # check if contained hit (ie A, B, A)
             if self._contained_hits(hits):
-                print "contained hits", "\n".join("\t".join(map(str, (qsize, qstart, qalg, strand, "_".join(t.split("_")[:2]), tstart, talg, self.contigs[t]))) for qstart, qalg, strand, t, tstart, talg in hits) + "\n"
+                self.logger("contained hits" + "\n".join("\t".join(map(str, (qsize, qstart, qalg, strand, "_".join(t.split("_")[:2]), tstart, talg, self.contigs[t]))) for qstart, qalg, strand, t, tstart, talg in hits) + "\n", 0)
                 continue
             
             # combine hits for the same pair
@@ -709,7 +711,7 @@ class LongReadGraph(Graph):
                 # get strand correctly - by majority voting
                 talg   = sum(x[1] for x in hits)
                 strand = int(round(1.0 * sum(x[1]*x[5] for x in hits) / talg))
-                #if strand>1: self.log.write("[ERROR] Wrong strand from majority voting: %s %s\n"%(strand, str(hits)))
+                #if strand>1: self.logger("[ERROR] Wrong strand from majority voting: %s %s\n"%(strand, str(hits)), 0)
 
                 if strand:
                     qstart = hits[-1][3]
@@ -723,7 +725,7 @@ class LongReadGraph(Graph):
                 uhits.append((q, qstart, qend, strand, t, tstart, tend))
 
             uhits = sorted(uhits, key=lambda x: x[1])
-            print "\t".join(map(str, uhits[0]))
+            self.logger("\t".join(map(str, uhits[0]))+"\n", 0)
             for i, (q, qstart, qend, strand, t, tstart, tend) in enumerate(uhits[1:]):
                 dist = qstart - uhits[i][2]
                 c1, c2 = t, uhits[i][4]
@@ -740,18 +742,18 @@ class LongReadGraph(Graph):
                 # calculate gap
                 gap = dist - pos1 + pos2
                 overhang = gap - dist
-                print "\t".join(map(str, (q, qstart, qend, strand, t, tstart, tend, gap)))
-                print " %s:%s %s -> %s:%s %s  %s  %s bp"%(c1, pos1, end1, c2, pos2, end2, dist, gap)
+                self.logger("\t".join(map(str, (q, qstart, qend, strand, t, tstart, tend, gap)))+"\n", 0)
+                self.logger(" %s:%s %s -> %s:%s %s  %s  %s bp\n"%(c1, pos1, end1, c2, pos2, end2, dist, gap), 0)
                 # skip if too big overhang on contig edge
                 if gap > self.maxgap or overhang > self.maxoverhang*(self.contigs[c1]+self.contigs[c2]):
-                    print " too big contig overhang (%s) or gap (%s)!\n"%(overhang, gap)
+                    self.logger(" too big contig overhang (%s) or gap (%s)!\n\n"%(overhang, gap), 0)
                     continue
                 self._add_longread_line(c1, c2, end1, end2, gap)
-            print
+            self.logger("\n", 0)
                 
         # get links
         self._get_links()
-        print self.ilonglinks, self.ilinks  
+        self.logger("%s %s\n"%(self.ilonglinks, self.ilinks), 0)
                 
     def _get_links(self):
         """Combine longlinks into links"""
@@ -764,7 +766,7 @@ class LongReadGraph(Graph):
                     gap = int(round(np.mean(gaps)))
                     gapstd = np.std(gaps)
                     if gapstd>100 and gapstd / gap > 0.25:
-                        print "highly variable gap size at %s %s -> %s %s: %s +- %.f %s"%(ref1, end1, ref2, end2, gap, gapstd, str(gaps))
+                        self.logger("highly variable gap size at %s %s -> %s %s: %s +- %.f %s\n"%(ref1, end1, ref2, end2, gap, gapstd, str(gaps)), 0)
                     self._add_line(ref1, ref2, end1, end2, links, gap)
                     self._add_line(ref2, ref1, end2, end1, links, gap)
                 
@@ -840,7 +842,7 @@ class SyntenyGraph(Graph):
             maxgap = min_maxgap
         # set variable
         self.maxgap = maxgap
-        self.log.write(" maxgap cut-off of %s bp\n"%self.maxgap)
+        self.logger(" maxgap cut-off of %s bp\n"%self.maxgap, 0)
 
     def _clean_overlaps_on_reference(self, _t2hits):
         """Remove hits that overlap on reference too much"""
@@ -877,7 +879,7 @@ class SyntenyGraph(Graph):
                 try:
                     dotplot.stdin.write(l)
                 except:
-                    self.log.write("[WARNING] dotplot generation failed!\n")
+                    self.logger("[WARNING] dotplot generation failed!\n", 0)
                     dotplot = None
             if l.startswith('#'):
                 continue
@@ -979,7 +981,7 @@ class SyntenyGraph(Graph):
                 try:
                     dotplot.stdin.write(l)
                 except:
-                    self.log.write("[WARNING] dotplot generation failed!\n")
+                    self.logger("[WARNING] dotplot generation failed!\n", 0)
                     dotplot = None
             if l.startswith('#'):
                 continue
