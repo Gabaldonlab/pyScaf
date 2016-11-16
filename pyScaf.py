@@ -35,7 +35,6 @@ def percentile(N, percent, key=lambda x:x):
 
     From http://code.activestate.com/recipes/511478-finding-the-percentile-of-the-values/
     """
-    print "calculating percentile"
     if not N:
         return None
     k = (len(N)-1) * percent
