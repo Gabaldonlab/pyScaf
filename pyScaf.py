@@ -5,6 +5,9 @@ desc="""Perform scaffolding of contigs using information from (in this order):
 - synteny to reference genome
 
 More info at: https://github.com/lpryszcz/pyScaf
+
+TDB:
+- remove numpy & Biopython dependency
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -12,14 +15,65 @@ l.p.pryszcz@gmail.com
 Warsaw, 12/03/2016
 """
 
-import os, sys
+import math, os, sys
 import resource, subprocess
 from datetime import datetime
-import numpy as np
+#import numpy as np
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio.Alphabet import IUPAC
+
+def percentile(N, percent, key=lambda x:x):
+    """
+    Find the percentile of a list of values. 
+
+    @parameter N - is a list of values. Note N MUST BE already sorted.
+    @parameter percent - a float value from 0.0 to 1.0.
+
+    @return - the percentile of the values
+
+    From http://code.activestate.com/recipes/511478-finding-the-percentile-of-the-values/
+    """
+    print "calculating percentile"
+    if not N:
+        return None
+    k = (len(N)-1) * percent
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return key(N[int(k)])
+    d0 = key(N[int(f)]) * (c-k)
+    d1 = key(N[int(c)]) * (k-f)
+    return d0+d1
+
+def median(N, key=lambda x:x):
+    """median is 50th percentile."""
+    return percentile(N, 0.5, key)
+
+def mean(data):
+    """Return the sample arithmetic mean of data.
+    http://stackoverflow.com/a/27758326/632242
+    """
+    n = len(data)
+    #if n < 1:
+    #    raise ValueError('mean requires at least one data point')
+    return sum(data)/float(n) 
+
+def _ss(data):
+    """Return sum of square deviations of sequence data."""
+    c = mean(data)
+    ss = sum((x-c)**2 for x in data)
+    return ss
+
+def pstdev(data):
+    """Calculates the population standard deviation."""
+    n = len(data)
+    #if n < 2:
+    #    raise ValueError('variance requires at least two data points')
+    ss = _ss(data)
+    pvar = ss/n # the population variance
+    return pvar**0.5
 
 class Graph(object):
     """Graph class to represent scaffolds. It shouldn't be invoked directly,
@@ -442,7 +496,7 @@ class ReadGraph(Graph):
         alllinks = {}
         for (c, e, pos) in sorted(links, key=lambda x: len(x[-1]), reverse=1):
             # get median pos - maybe use mean & stdev?
-            mpos = np.median([int(str(p).split('.')[0]) for p in pos]) # get_median(pos)
+            mpos = median([int(str(p).split('.')[0]) for p in pos]) 
             if not alllinks:
                 alllinks[mpos] = [(c, e, pos)]
                 continue
@@ -481,7 +535,7 @@ class ReadGraph(Graph):
         """Return estimated size of the gap"""
         # unload positions
         dists = [self.isize - sum(map(int, str(pos).split('.'))) for pos in positions]
-        return np.median(dists)-self.rlen
+        return median(dists)-self.rlen
         
     def _filter_links(self):
         """Filter readlinks by removing contigs with too many connections ie. repeats"""
@@ -763,8 +817,8 @@ class LongReadGraph(Graph):
                     if ref1 > ref2:
                         continue
                     links = len(gaps)
-                    gap = int(round(np.mean(gaps)))
-                    gapstd = np.std(gaps)
+                    gap = int(round(mean(gaps)))
+                    gapstd = pstdev(gaps)
                     if gapstd>100 and gapstd / gap > 0.25:
                         self.logger("highly variable gap size at %s %s -> %s %s: %s +- %.f %s\n"%(ref1, end1, ref2, end2, gap, gapstd, str(gaps)), 0)
                     self._add_line(ref1, ref2, end1, end2, links, gap)
