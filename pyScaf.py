@@ -818,7 +818,7 @@ class LongReadGraph(Graph):
                     links = len(gaps)
                     gap = int(round(mean(gaps)))
                     gapstd = pstdev(gaps)
-                    if gapstd>100 and gapstd / gap > 0.25:
+                    if gap and gapstd>100 and gapstd / gap > 0.25:
                         self.logger("highly variable gap size at %s %s -> %s %s: %s +- %.f %s\n"%(ref1, end1, ref2, end2, gap, gapstd, str(gaps)), 0)
                     self._add_line(ref1, ref2, end1, end2, links, gap)
                     self._add_line(ref2, ref1, end2, end1, links, gap)
