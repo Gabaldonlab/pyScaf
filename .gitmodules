@@ -1,0 +1,3 @@
+[submodule "bin/FastaIndex"]
+    path = bin/FastaIndex
+    url = https://github.com/lpryszcz/FastaIndex.git

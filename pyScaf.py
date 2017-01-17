@@ -5,9 +5,6 @@ desc="""Perform scaffolding of contigs using information from (in this order):
 - synteny to reference genome
 
 More info at: https://github.com/lpryszcz/pyScaf
-
-TDB:
-- remove numpy & Biopython dependency
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -18,11 +15,7 @@ Warsaw, 12/03/2016
 import math, os, sys
 import resource, subprocess
 from datetime import datetime
-#import numpy as np
-from Bio import SeqIO
-from Bio.Seq import Seq
-from Bio.SeqRecord import SeqRecord
-from Bio.Alphabet import IUPAC
+from FastaIndex import FastaIndex
 
 def percentile(N, percent, key=lambda x:x):
     """
@@ -100,13 +93,13 @@ class Graph(object):
         self.printlimit = printlimit
         self.ilinks  = 0
 
-    def logger(self, mssg="", timestamp=1):
+    def logger(self, mssg="", decorate=1):
         """Logging function."""
         head = "\n%s"%("#"*50,)
         timestamp = "\n[%s]"% datetime.ctime(datetime.now())
         memusage  = "[%5i Mb] "%(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024, )
         if self.log:
-            if timestamp:
+            if decorate:
                 self.log.write("".join((head, timestamp, memusage, mssg)))
             else:
                 self.log.write(mssg)
@@ -138,10 +131,10 @@ class Graph(object):
     def _init_storage(self, genome):
         """Load sequences from genome, their sizes and init links"""
         # load fasta into index
-        self.sequences = SeqIO.index_db(genome+".db3", genome, 'fasta')
+        self.sequences = FastaIndex(genome)
         self.seq = self.sequences
         # prepare storage
-        self.contigs = {c: len(self.seq[c]) for c in self.seq}
+        self.contigs = {c: self.seq.id2stats[c][0] for c in self.seq}
         self.links   = {c: [{}, {}] for c in self.contigs}
         self.ilinks  = 0
         
@@ -151,26 +144,26 @@ class Graph(object):
         self.links[ref1][end1][(ref2, end2)] = (links, gap)
         # update connection counter 
         self.ilinks += 1
-                   
+        
     def _get_seqrecord(self, name, scaffold, orientations, gaps):
-        """"Return SeqRecord for given scaffold"""
+        """"Return name & seq for given scaffold"""
         # add empty gap at the end
         gaps.append(0)
         seqs = []
         for c, reverse, gap in zip(scaffold, orientations, gaps):
-            if reverse:
-                seq = self.seq[c].reverse_complement().seq
-            else:
-                seq = self.seq[c].seq
+            seq = self.seq.get_sequence(c, reverse)
             # adjust gap size
             if gap and gap < self.mingap:
                 strip = int(gap - self.mingap)
                 seq = seq[:strip]
                 gap = self.mingap
             seqs.append(str(seq)+"N"*gap)
-        # generate seq record & report fasta
-        r = SeqRecord(Seq("".join(seqs), IUPAC.ambiguous_dna), id=name)
-        return r
+        return name, "".join(seqs)
+
+    def _format_fasta(self, name, seq, linebases=60):
+        """Return formatted FastA entry"""
+        seq = '\n'.join(seq[i:i+linebases] for i in range(0, len(seq), linebases))
+        return ">%s\n%s\n"%(name, seq)
         
     def save(self, out, format='fasta'):
         """Resolve & report scaffolds"""
@@ -187,13 +180,13 @@ class Graph(object):
             # scaffold00001
             name = str("scaffold%5i"%i).replace(' ','0')
             # save scaffold
-            r = self._get_seqrecord(name, scaffold, orientations, gaps)
-            out.write(r.format('fasta'))
+            name, seq = self._get_seqrecord(name, scaffold, orientations, gaps)
+            out.write(self._format_fasta(name, seq))
             # report info
-            log.write(logline%(name, len(r), len(scaffold), " ".join(scaffold),
+            log.write(logline%(name, len(seq), len(scaffold), " ".join(scaffold),
                                " ".join(map(str, (int(x) for x in orientations))), # x may be bool!
                                " ".join(map(str, (x for x in gaps)))))
-            totsize += len(r)
+            totsize += len(seq)
         # close output & loge
         out.close()
         log.close()
@@ -245,6 +238,7 @@ class Graph(object):
         proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
         args3 = ["maf-convert", "tab", "-"]
         proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=sys.stderr)
+        #print " ".join(args1), queries
         return proc3.stdout
 
     def _lastal_global(self, query=''):
@@ -668,6 +662,8 @@ class LongReadGraph(Graph):
         # maybe instead of last-split, get longest, non-overlapping matches here
         q2hits, q2size = {}, {}
         for l in self._lastal(): # open('contigs.reduced.fa.tab7'): #
+            # strip leading spaces
+            l = l.lstrip()        
             if l.startswith('#'):
                 continue
             # unpack
@@ -1030,6 +1026,8 @@ class SyntenyGraph(Graph):
         t2hits, t2size = {}, {}
         q2hits = {}
         for l in self._lastal(self.genome):
+            # strip leading spaces
+            l = l.lstrip()
             if dotplot:
                 try:
                     dotplot.stdin.write(l)
@@ -1151,7 +1149,7 @@ def main():
     refo.add_argument("--norearrangements", default=False, action='store_true', 
                       help="high identity mode (rearrangements not allowed)")
     
-    scaf = parser.add_argument_group('long read-based scaffolding options')
+    scaf = parser.add_argument_group('long read-based scaffolding options (EXPERIMENTAL!)')
     scaf.add_argument("-n", "--longreads", nargs="+",
                       help="FastQ/FastA file(s) with PacBio/ONT reads")
     
@@ -1169,7 +1167,7 @@ def main():
     
     # standard
     #parser.add_argument("-v", dest="verbose",  default=False, action="store_true", help="verbose")    
-    parser.add_argument('--version', action='version', version='0.11b')   
+    parser.add_argument('--version', action='version', version='0.12a')   
     o = parser.parse_args()
     #if o.verbose:
     o.log.write("Options: %s\n"%str(o))

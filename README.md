@@ -22,7 +22,7 @@ pyScaf orders contigs from genome assemblies utilising several types of informat
 This is under development... Stay tuned. 
 
 ### Scaffolding based on long reads
-This is under development... Stay tuned.
+Experimental version available.
 
 ### Reference-based scaffolding
 In reference-based mode, pyScaf uses synteny to the genome of closely related species in order to order contigs and estimate distances between adjacent contigs.
@@ -44,8 +44,9 @@ Runs took ~0.5 min for CANPA on `4 CPUs` and ~2 min for ARATH on `16 CPUs`.
 
 # Usage
 
-## Prerequisites
+## Dependencies
 - [LAST v700+](http://last.cbrc.jp/)
+- [FastaIndex](https://github.com/lpryszcz/FastaIndex)
 
 ## Parameters
 
@@ -56,23 +57,31 @@ Given reference genome, the program generates pairwise genome alignment (dotplot
   -h, --help            show this help message and exit
   -f FASTA, --fasta FASTA
                         assembly FASTA file
+  -o OUTPUT, --output OUTPUT
+                        output stream [scaffolds.fa]
   -t THREADS, --threads THREADS
                         max no. of threads to run [4]
   --log LOG             output log to [stderr]
-  --dotplot {,png}      generate dotplot as [png]
+  --dotplot {,png,gif,pdf}
+                        generate dotplot as [png]
   --version             show program's version number and exit
 ```
 - Reference-based scaffolding options:
 ```
   -r REF, --ref REF, --reference REF
-                        reference FASTA file
+                        reference FastA file
   --identity IDENTITY   min. identity [0.33]
   --overlap OVERLAP     min. overlap  [0.66]
   -g MAXGAP, --maxgap MAXGAP
-                        max. distance between adjacent contigs [0.02 * assembly_size]
+                        max. distance between adjacent contigs [0.01 * assembly_size]
   --norearrangements    high identity mode (rearrangements not allowed)
 ```
-- NGS-based scaffolding options:
+- Long read-based scaffolding options (EXPERIMENTAL!): 
+```
+  -n LONGREADS [LONGREADS ...], --longreads LONGREADS [LONGREADS ...]
+                        FastQ/FastA file(s) with PacBio/ONT reads
+```
+- NGS-based scaffolding options (!NOT IMPLEMENTED!):
 ```
   -i FASTQ [FASTQ ...], --fastq FASTQ [FASTQ ...]
                         FASTQ PE/MP files
@@ -101,9 +110,9 @@ If you wish to skip dotplot generation (ie. no X11 on your system), provide `--d
 
 # scaffold reduced contigs using long reads
 ## pacbio
-./pyScaf.py -f test/contigs.reduced.fa -n test/pacbio.fq.gz -o test/contigs.reduced.pacbio.fa > test/contigs.reduced.pacbio.fa.log
+./pyScaf.py -f test/contigs.reduced.fa -n test/pacbio.fq.gz -o test/contigs.reduced.pacbio.fa
 ## nanopore
-./pyScaf.py -f test/contigs.reduced.fa -n test/nanopore.fa.gz -o test/contigs.reduced.nanopore.fa > test/contigs.reduced.nanopore.fa.log
+./pyScaf.py -f test/contigs.reduced.fa -n test/nanopore.fa.gz -o test/contigs.reduced.nanopore.fa
 
 # generate dotplot
 lastdb test/ref.fa
@@ -116,6 +125,7 @@ lastal -f TAB test/ref.fa test/contigs.reduced.nanopore.fa | last-dotplot - test
 
 ## Proof of concept
 pyScaf is under heavy development right now.
-Nevertheless, the reference-based mode is functional and produces meaningful assemblies.
-For more info, have a look in [workbook](https://docs.google.com/document/d/1WNw6FYZXNI2sKJ1hBZ0LI9CWJSQ-BTQID7jL9lLvYaA/edit?usp=sharing).
+Nevertheless, the reference-based mode is functional and produces meaningful assemblies. Moverover, it has been implemented in [Redundans](https://github.com/lpryszcz/redundans).
+
+For more info, have a look in [workbook](https://docs.google.com/document/d/1WNw6FYZXNI2sKJ1hBZ0LI9CWJSQ-BTQID7jL9lLvYaA/edit?usp=sharing). 
 
