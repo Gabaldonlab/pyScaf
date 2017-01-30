@@ -5,9 +5,9 @@ pyScaf
 
 pyScaf orders contigs from genome assemblies utilising several types of information:
 
-- paired-end (PE) and/or mate-pair libraries ([NGS-based mode](#ngs-based-scaffolding))
-- long reads ([NGS-based mode](#scaffolding-based-on-long-reads))
-- synteny to the genome of some related species ([reference-based mode](#reference-based-scaffolding))
+- paired-end (PE) and/or mate-pair libraries (`NGS-based mode <#NGS-based scaffolding>`_)
+- long reads (`Scaffolding based on long reads <#Scaffolding based on long reads>`_)
+- synteny to the genome of some related species (`Reference-based scaffolding <#Reference-based-scaffolding>`_)
 
 =================
 Scaffolding modes
@@ -19,13 +19,21 @@ This is under development... Stay tuned.
 
 Scaffolding based on long reads
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Experimental version available.
+In this mode, pyScaf aligns long reads onto the contigs, identifies the reads the connects two or more contigs and join adjacent contigs.  
+
+Long reads are aligned locally onto contigs, ignoring:
+
+- matches not satisfying cut-offs (`--identity` and `--overlap`)
+- suboptimal matches (only best match of each query to reference is kept) 
+- and removing overlapping matches on reference. 
+
+**Note, this is experimental implementation.** 
 
 Reference-based scaffolding
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 In reference-based mode, pyScaf uses synteny to the genome of closely related species in order to order contigs and estimate distances between adjacent contigs.
 
-Contigs are aligned globally (end-to-end) onto reference chromosomes, ignoring:
+Contigs are aligned locally onto reference chromosomes, ignoring:
 
 - matches not satisfying cut-offs (`--identity` and `--overlap`)
 - suboptimal matches (only best match of each query to reference is kept) 
@@ -131,7 +139,8 @@ If you wish to skip dotplot generation (ie. no X11 on your system), provide `--d
 Proof of concept
 ================
 pyScaf is under heavy development right now.
-Nevertheless, the reference-based mode is functional and produces meaningful assemblies. Moverover, it has been implemented in `Redundans <https://github.com/lpryszcz/redundans>`_.
+Nevertheless, both the reference-based mode and long-read mode are functional and produces meaningful assemblies.
+pyScaf has been implemented in `Redundans <https://github.com/lpryszcz/redundans>`_.
 
 For more info, have a look in `workbook <https://docs.google.com/document/d/1WNw6FYZXNI2sKJ1hBZ0LI9CWJSQ-BTQID7jL9lLvYaA/edit?usp=sharing>`_. 
 

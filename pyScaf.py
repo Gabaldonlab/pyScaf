@@ -176,6 +176,7 @@ class Graph(object):
         logline = "%s\t%s\t%s\t%s\t%s\t%s\n"
         log.write("# name\tsize\tno. of contigs\tordered contigs\tcontig orientations (0-forward; 1-reverse)\tgap sizes (negative gap size = adjacent contigs are overlapping)\n")
         totsize = 0
+        added = set()
         for i, (scaffold, orientations, gaps) in enumerate(self.scaffolds, 1):
             # scaffold00001
             name = str("scaffold%5i"%i).replace(' ','0')
@@ -187,6 +188,14 @@ class Graph(object):
                                " ".join(map(str, (int(x) for x in orientations))), # x may be bool!
                                " ".join(map(str, (x for x in gaps)))))
             totsize += len(seq)
+            # store info about added
+            for c in scaffold:
+                added.add(c)
+        # add contigs that were not scaffolded
+        for contig in filter(lambda x: x not in added, self.seq):
+            name = "unscaffolded.%s"%contig
+            seq = self.seq.get_sequence(contig)
+            out.write(self._format_fasta(name, seq))
         # close output & loge
         out.close()
         log.close()
@@ -1198,11 +1207,11 @@ def main():
     #parser.add_argument("-v", dest="verbose",  default=False, action="store_true", help="verbose")    
     parser.add_argument('--version', action='version', version='0.12a')
     
-    o = parser.parse_args()
     # print help if no parameters
     if len(sys.argv)==1:
         parser.print_help()
         sys.exit(1)
+    o = parser.parse_args()
     #if o.verbose:
     o.log.write("Options: %s\n"%str(o))
 
