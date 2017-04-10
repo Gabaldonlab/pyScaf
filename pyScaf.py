@@ -195,6 +195,7 @@ class Graph(object):
 
     def save_dotplot(self, query, readstdin=False): # open('/dev/null','w')): #
         """Produce query to reference dotplot"""
+        ### TBD: generate dotplot only if less than several hundreds of seqs in query
         outfn = "%s.%s"%(query, self.dotplot)
         self.logger("Saving dotplots to: %s\n"%outfn) 
         args = ["last-dotplot", "-", outfn]
