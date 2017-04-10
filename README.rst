@@ -23,7 +23,7 @@ In this mode, pyScaf aligns long reads onto the contigs, identifies the reads th
 
 Long reads are aligned locally onto contigs, ignoring:
 
-- matches not satisfying cut-offs (`--identity` and `--overlap`)
+- matches not satisfying cut-offs (``--identity`` and ``--overlap``)
 - suboptimal matches (only best match of each query to reference is kept) 
 - and removing overlapping matches on reference. 
 
@@ -35,12 +35,12 @@ In reference-based mode, pyScaf uses synteny to the genome of closely related sp
 
 Contigs are aligned locally onto reference chromosomes, ignoring:
 
-- matches not satisfying cut-offs (``--identity`` and `--overlap`)
+- matches not satisfying cut-offs (``--identity`` and ``--overlap``)
 - suboptimal matches (only best match of each query to reference is kept) 
 - and removing overlapping matches on reference. 
 
 In preliminary tests, pyScaf performed superbly on simulated heterozygous genomes based on *C. parapsilosis* (13 Mb; CANPA) and *A. thaliana* (119 Mb; ARATH) chromosomes, reconstructing correctly all chromosomes always for CANPA and nearly always for ARATH (`Figures in dropbox <https://www.dropbox.com/sh/bb7lwggo40xrwtc/AAAZ7pByVQQQ-WhUXZVeJaZVa/pyScaf?dl=0>`_, `CANPA table <https://docs.google.com/spreadsheets/d/1InBExy-qKDLj-upd8tlPItVSKc4mLepZjZxB31ii9OY/edit#gid=2036953672>`_, `ARATH table <https://docs.google.com/spreadsheets/d/1InBExy-qKDLj-upd8tlPItVSKc4mLepZjZxB31ii9OY/edit#gid=1920757821>`_).  
-Runs took ~0.5 min for CANPA on `4 CPUs` and ~2 min for ARATH on `16 CPUs`. 
+Runs took ~0.5 min for CANPA on ``4 CPUs`` and ~2 min for ARATH on ``16 CPUs``. 
 
 **Important remarks:**
 
