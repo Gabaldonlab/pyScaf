@@ -13,7 +13,7 @@ Warsaw, 12/03/2016
 """
 
 import math, os, sys
-import resource, subprocess
+import commands, resource, subprocess
 from datetime import datetime
 from FastaIndex import FastaIndex
 
@@ -176,6 +176,7 @@ class Graph(object):
         logline = "%s\t%s\t%s\t%s\t%s\t%s\n"
         log.write("# name\tsize\tno. of contigs\tordered contigs\tcontig orientations (0-forward; 1-reverse)\tgap sizes (negative gap size = adjacent contigs are overlapping)\n")
         totsize = 0
+        added = set()
         for i, (scaffold, orientations, gaps) in enumerate(self.scaffolds, 1):
             # scaffold00001
             name = str("scaffold%5i"%i).replace(' ','0')
@@ -187,6 +188,14 @@ class Graph(object):
                                " ".join(map(str, (int(x) for x in orientations))), # x may be bool!
                                " ".join(map(str, (x for x in gaps)))))
             totsize += len(seq)
+            # store info about added
+            for c in scaffold:
+                added.add(c)
+        # add contigs that were not scaffolded
+        for contig in filter(lambda x: x not in added, self.seq):
+            name = "unscaffolded.%s"%contig
+            seq = self.seq.get_sequence(contig)
+            out.write(self._format_fasta(name, seq))
         # close output & loge
         out.close()
         log.close()
@@ -1121,6 +1130,35 @@ class SyntenyGraph(Graph):
         # add missing
         for c in filter(lambda x: x not in added, self.contigs):
             self.scaffolds.append([(c,),(0,),[]])
+
+def _check_executable(cmd):
+    """Check if executable exists."""
+    p = subprocess.Popen("type " + cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return "".join(p.stdout.readlines())
+
+def _check_dependencies(dependencies):
+    """Return error if wrong software version"""
+    warning = 0
+    info = "[WARNING] Old version of %s: %s. Update to version %s+!\n"
+    for cmd, version in dependencies.iteritems():
+        out = _check_executable(cmd)
+        if "not found" in out:
+            warning = 1
+            sys.stderr.write("[ERROR] %s\n"%out)
+        elif version:
+            out = commands.getoutput("%s --version"%cmd)
+            curver = out.split()[-1]
+            if not curver.isdigit():
+                warning = 1
+                sys.stderr.write("[WARNING] Problem checking %s version: %s\n"%(cmd, out))
+            if int(curver)<version:
+                warning = 1
+                sys.stderr.write(info%(cmd, curver, version))
+                
+    message = "Make sure you have installed all dependencies from https://github.com/lpryszcz/redundans#manual-installation !"
+    if warning:
+        sys.stderr.write("\n%s\n\n"%message)
+        sys.exit(1)
             
 def main():
     import argparse
@@ -1168,10 +1206,19 @@ def main():
     
     # standard
     #parser.add_argument("-v", dest="verbose",  default=False, action="store_true", help="verbose")    
-    parser.add_argument('--version', action='version', version='0.12a')   
+    parser.add_argument('--version', action='version', version='0.12a')
+    
+    # print help if no parameters
+    if len(sys.argv)==1:
+        parser.print_help()
+        sys.exit(1)
     o = parser.parse_args()
     #if o.verbose:
     o.log.write("Options: %s\n"%str(o))
+
+    # check if all executables exists & in correct versions
+    dependencies = {'lastal': 700, 'lastdb': 700, }
+    _check_dependencies(dependencies)
     
     # check logic
     if not o.ref and not o.fastq and not o.longreads:
