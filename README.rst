@@ -35,7 +35,7 @@ In reference-based mode, pyScaf uses synteny to the genome of closely related sp
 
 Contigs are aligned locally onto reference chromosomes, ignoring:
 
-- matches not satisfying cut-offs (`--identity` and `--overlap`)
+- matches not satisfying cut-offs (``--identity`` and `--overlap`)
 - suboptimal matches (only best match of each query to reference is kept) 
 - and removing overlapping matches on reference. 
 
@@ -107,7 +107,7 @@ Test run
 ~~~~~~~~
 To perform reference-based assembly, provide assembled contigs and reference genome in FastA format.
 Dotplots of below runs can be found in `docs </docs>`_.  
-If you wish to skip dotplot generation (ie. no X11 on your system), provide ``--dotplot ''`` parameter.
+If you wish to skip dotplot generation (ie. no X11 on your system), provide `` --dotplot '' `` parameter.
 
 .. code-block:: bash
 
