@@ -1155,7 +1155,7 @@ def _check_dependencies(dependencies):
                 warning = 1
                 sys.stderr.write(info%(cmd, curver, version))
                 
-    message = "Make sure you have installed all dependencies from https://github.com/lpryszcz/redundans#manual-installation !"
+    message = "Make sure you have installed all dependencies from https://github.com/lpryszcz/pyScaf#dependencies !"
     if warning:
         sys.stderr.write("\n%s\n\n"%message)
         sys.exit(1)
