@@ -238,7 +238,7 @@ class Graph(object):
         elif seqformat in ("fastq", "fq"):
             seqformatcode = "1" # FastQ
         else:
-            self.logger("[WARNING] Unsupported sequence format `%s` in %s\n"%(seqformat, self.fastq[0]), 0)
+            self.logger("[WARNING] Unsupported sequence format `%s` in %s\n"%(seqformat, queries[0]), 0)
             sys.exit(1)
         # combine processes
         proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stderr=sys.stderr)
@@ -865,7 +865,8 @@ class LongReadGraph(Graph):
 class SyntenyGraph(Graph):
     """Graph class to represent scaffolds derived from synteny information"""
     def __init__(self, genome, reference, identity=0.51, overlap=0.66, norearrangements=0, 
-                 threads=4, mingap=15, maxgap=0, dotplot="png", printlimit=10, log=sys.stderr):
+                 threads=4, mingap=15, maxgap=0, nofilter_overlaps=0, 
+                 dotplot="png", printlimit=10, log=sys.stderr):
         """Construct a graph with the given vertices & features"""
         self.name = "ReferenceGraph"
         self.log = log
@@ -890,6 +891,7 @@ class SyntenyGraph(Graph):
         # scaffolding options
         self.mingap  = mingap
         self._set_maxgap(maxgap)
+        self.nofilter_overlaps = nofilter_overlaps
         
     def _set_maxgap(self, maxgap=0, frac=0.01, min_maxgap=10000):
         """Set maxgap to 0.01 of assembly size, 0.01 of assembly size"""
@@ -1020,7 +1022,7 @@ class SyntenyGraph(Graph):
                 # and report rearrangements
                 
                 # get strand correctly - by majority voting
-                strand = int(round( 1.0 * sum(x[4]*x[5] for x in hits) / qalg))
+                strand = int(round(1.0 * sum(x[4]*x[5] for x in hits) / qalg))
                 t2hits2[t].append((tstart, tend, q, qstart, qend, strand))
                 #print t, tstart, tend, q, qstart, qend, strand, len(t2hits[t][q]), identity, overlap
                 
@@ -1071,7 +1073,8 @@ class SyntenyGraph(Graph):
         #for t, hits in t2hits.iteritems(): print t, hits
 
         # clean overlaps on reference
-        t2hits = self._clean_overlaps_on_reference(t2hits)
+        if not self.nofilter_overlaps:
+            t2hits = self._clean_overlaps_on_reference(t2hits)
 
         #print "after clean-up"
         #for t, hits in t2hits.iteritems(): print t, hits
@@ -1179,14 +1182,16 @@ def main():
     refo = parser.add_argument_group('Reference-based scaffolding options')
     refo.add_argument("-r", "--ref", "--reference", default='', 
                       help="reference FastA file")
-    refo.add_argument("--identity",        default=0.33, type=float,
+    refo.add_argument("--identity", default=0.33, type=float,
                       help="min. identity [%(default)s]")
-    refo.add_argument("--overlap",         default=0.66, type=float,
+    refo.add_argument("--overlap", default=0.66, type=float,
                       help="min. overlap  [%(default)s]")
-    refo.add_argument("-g", "--maxgap",   default=0, type=int,
+    refo.add_argument("-g", "--maxgap", default=0, type=int,
                       help="max. distance between adjacent contigs [0.01 * assembly_size]")
-    refo.add_argument("--norearrangements", default=False, action='store_true', 
+    refo.add_argument("--norearrangements", action='store_true', 
                       help="high identity mode (rearrangements not allowed)")
+    refo.add_argument("-nfo", "--nofilter_overlaps", action='store_true', 
+                      help="don't filter overlaps on reference ie. polyploid or transcriptome scaffolding")
     
     scaf = parser.add_argument_group('long read-based scaffolding options (EXPERIMENTAL!)')
     scaf.add_argument("-n", "--longreads", nargs="+",
@@ -1274,7 +1279,8 @@ def main():
     elif o.ref:
         # init
         s = SyntenyGraph(fasta, o.ref, identity=o.identity, overlap=o.overlap, \
-                         maxgap=o.maxgap, threads=o.threads, dotplot=o.dotplot,
+                         maxgap=o.maxgap, threads=o.threads, dotplot=o.dotplot, \
+                         nofilter_overlaps=o.nofilter_overlaps, 
                          norearrangements=o.norearrangements, log=log)
         # save output
         s.save(out)
