@@ -13,9 +13,17 @@ Warsaw, 12/03/2016
 """
 
 import math, os, sys
-import commands, resource, subprocess
+import resource, subprocess
 from datetime import datetime
 from FastaIndex import FastaIndex
+
+# update sys.path & environmental PATH
+root = os.path.dirname(os.path.abspath(sys.argv[0]))
+src = ["minimap2", ] 
+paths = [os.path.join(root, p) for p in src]
+sys.path = paths + sys.path
+os.environ["PATH"] = "%s:%s"%(':'.join(paths), os.environ["PATH"])
+
 
 def percentile(N, percent, key=lambda x:x):
     """
@@ -214,6 +222,18 @@ class Graph(object):
             proc = subprocess.Popen(args, stdin=self._lastal(query), stderr=self.log)
         return proc
 
+    def _minimap2(self, queries=[]):
+        """Start minimap2 alignment subprocess"""
+        # decide on input
+        opts = []
+        if not queries:
+            opts = ["-x", "map-ont"]
+            queries = self.fastq
+        # define cmd
+        args = ["minimap2/minimap2", "-t", str(self.threads)] + opts + [self.ref, queries]
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=sys.stderr)
+        return proc.stdout
+        
     def _lastal(self, queries=[]):
         """Start LAST in local mode and with FastQ input (-Q 1)."""
         # build db
@@ -250,7 +270,7 @@ class Graph(object):
         proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=sys.stderr)
         #print " ".join(args1), queries
         return proc3.stdout
-
+        
     def _lastal_global(self, query=''):
         """Start LAST in overlap mode. Slightly faster than local mode,
         but much less sensitive."""
@@ -631,7 +651,8 @@ class ReadGraph(Graph):
 class LongReadGraph(Graph):
     """Graph class to represent scaffolds derived from long read information"""
     def __init__(self, genome, fastq, identity=0.51, overlap=0.66, norearrangements=0, 
-                 threads=4, dotplot="png", mingap=15, maxgap=0, printlimit=10, log=sys.stderr):
+                 threads=4, dotplot="png", mingap=15, maxgap=0, printlimit=10, mapq=10,
+                 minoverlap=1000, log=sys.stderr):
         """Construct a graph with the given vertices & features"""
         self.name = "ReferenceGraph"
         self.log = log
@@ -647,10 +668,12 @@ class LongReadGraph(Graph):
         self.overlap  = overlap
         self.threads  = threads
         self.dotplot  = dotplot
+        self.mapq = mapq
+        self.minoverlap = minoverlap
         # scaffolding options
         self.mingap  = mingap
         self._set_maxgap(maxgap)
-        self.maxoverhang = 0.1
+        self.maxoverhang = 0.2
         # store long links
         self.longlinks = {c: [{}, {}] for c in self.contigs}
         self.ilonglinks = 0
@@ -666,12 +689,79 @@ class LongReadGraph(Graph):
         # set variable
         self.maxgap = maxgap
         self.logger(" maxgap cut-off of %s bp\n"%self.maxgap, 0)
-        
+
+    def _get_hits_paf(self):
+        """Return best global hits from PAF""" #https://github.com/lh3/miniasm/blob/master/PAF.md
+        pq, pqsize, hits = '', 0, []
+        import gzip
+        for l in gzip.open(self.ref+'.paf.gz'): #self._minimap2():
+            q, qsize, qstart, qend, strand, t, tsize, tstart, tend, matches, qalg, mapq = l.split('\t')[:12]
+            qsize, qstart, qend, tsize, tstart, tend, matches, qalg, mapq = map(int, (qsize, qstart, qend, tsize, tstart, tend, matches, qalg, mapq))
+            # skip if to low mapping quality
+            if mapq<self.mapq:
+                continue
+            # report previous
+            if q!=pq:
+                if pq:
+                    yield pq, pqsize, hits
+                # reset
+                pq, pqsize, hits = q, qsize, []
+            # store if first hit and > 1000 or overlap>0.66
+            if not hits and tend-tstart>=self.minoverlap or 1.*(tend-tstart)/tsize>=self.overlap:
+                # adjust strand
+                if strand=="+":
+                    strand = 0
+                else:
+                    strand = 1
+                hits.append((qstart, qend, strand, t, tstart, tend))
+        if pq:
+            yield pq, pqsize, hits
+
+    def _hits2longlinks2(self):
+        """Generate links from minimap2 alignments"""
+        for q, qsize, hits in self._get_hits_paf():
+            if len(hits)<2:
+                continue
+            # sort
+            hits.sort()
+            # eliminate contigs overlapping too much!
+
+            # report joins
+            for i, (qstart, qend, strand, t, tstart, tend) in enumerate(hits[1:]):
+                dist = qstart - hits[i][1]
+                c1, c2 = t, hits[i][3]
+                # get contig orientation E->S
+                end1, end2 = 0, 1
+                pos1, pos2 = tstart, hits[i][5]
+                if strand:
+                    end1 = 1 # ->E
+                    #pos1 = self.contigs[c1] - tend
+                #pos2 = self.contigs[c2] - uhits[i][6]
+                if hits[i][2]: 
+                    end2 = 0 # S->
+                    #pos2 = uhits[i][5]
+                # calculate gap
+                gap = dist - pos1 + pos2
+                overhang = gap - dist
+                self.logger("\t".join(map(str, (q, qstart, qend, strand, t, tstart, tend, gap)))+"\n", 0)
+                self.logger(" %s:%s %s -> %s:%s %s  %s  %s bp\n"%(c1, pos1, end1, c2, pos2, end2, dist, gap), 0)
+                # skip if too big overhang on contig edge
+                if gap > self.maxgap or overhang > self.maxoverhang*(self.contigs[c1]+self.contigs[c2]):
+                    self.logger(" too big contig overhang (%s) or gap (%s)!\n\n"%(overhang, gap), 0)
+                    continue
+                self._add_longread_line(c1, c2, end1, end2, gap)
+            self.logger("\n", 0)
+              
+        # get links
+        self._get_links()
+        self.logger("%s %s\n"%(self.ilonglinks, self.ilinks), 0)
+                
     def _get_hits(self):
         """Resolve & report scaffolds"""
         # maybe instead of last-split, get longest, non-overlapping matches here
         q2hits, q2size = {}, {}
-        for l in self._lastal(): # open('contigs.reduced.fa.tab7'): #
+        import gzip
+        for l in gzip.open('ATCC42981_contig.fa.tab.gz'): #self._lastal(): # #
             # strip leading spaces
             l = l.lstrip()        
             if l.startswith('#'):
@@ -750,7 +840,7 @@ class LongReadGraph(Graph):
 
             # check if contained hit (ie A, B, A)
             if self._contained_hits(hits):
-                self.logger("contained hits" + "\n".join("\t".join(map(str, (qsize, qstart, qalg, strand, "_".join(t.split("_")[:2]), tstart, talg, self.contigs[t]))) for qstart, qalg, strand, t, tstart, talg in hits) + "\n", 0)
+                self.logger("contained hits\n" + "\n".join("\t".join(map(str, (qsize, qstart, qalg, strand, "_".join(t.split("_")[:2]), tstart, talg, self.contigs[t]))) for qstart, qalg, strand, t, tstart, talg in hits) + "\n", 0)
                 continue
             
             # combine hits for the same pair
@@ -832,12 +922,13 @@ class LongReadGraph(Graph):
     def _get_scaffolds(self):
         """Resolve & report scaffolds"""
         self.logger("Aligning long reads on contigs...\n")
+        self._hits2longlinks2()
         # get best ref-match to each contig
-        q2hits, q2size = self._get_hits()
+        #q2hits, q2size = self._get_hits()
 
         # get simplified global alignments
         #self.longlinks = {c: [{}, {}] for c in self.contigs}
-        self._hits2longlinks(q2hits, q2size)
+        #self._hits2longlinks(q2hits, q2size)
         
         # build scaffolds
         self.scaffolds = []
@@ -1143,13 +1234,14 @@ def _check_dependencies(dependencies):
     """Return error if wrong software version"""
     warning = 0
     info = "[WARNING] Old version of %s: %s. Update to version %s+!\n"
-    for cmd, version in dependencies.iteritems():
+    for cmd, version in dependencies.items():
         out = _check_executable(cmd)
         if "not found" in out:
             warning = 1
             sys.stderr.write("[ERROR] %s\n"%out)
         elif version:
-            out = commands.getoutput("%s --version"%cmd)
+            p = subprocess.Popen([cmd, '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            out = "".join(p.stdout.readlines())
             curver = out.split()[-1]
             if not curver.isdigit():
                 warning = 1
@@ -1222,7 +1314,7 @@ def main():
     o.log.write("Options: %s\n"%str(o))
 
     # check if all executables exists & in correct versions
-    dependencies = {'lastal': 700, 'lastdb': 700, }
+    dependencies = {'lastal': 700, 'lastdb': 700, 'minimap2': 0}
     _check_dependencies(dependencies)
     
     # check logic
@@ -1249,7 +1341,7 @@ def main():
     if o.longreads:
         s = LongReadGraph(fasta, o.longreads, identity=o.identity, overlap=o.overlap, \
                           maxgap=o.maxgap, threads=o.threads, dotplot=o.dotplot, 
-                          norearrangements=o.norearrangements, log=log)
+                          norearrangements=o.norearrangements, mapq=o.mapq, log=log)
         # save output
         s.save(out)
         if o.dotplot:

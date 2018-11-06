@@ -1,3 +1,6 @@
 [submodule "FastaIndex"]
     path = FastaIndex
     url = https://github.com/lpryszcz/FastaIndex.git
+[submodule "minimap2"]
+	path = minimap2
+	url = https://github.com/lh3/minimap2

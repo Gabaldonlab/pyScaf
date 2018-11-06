@@ -13,14 +13,14 @@ from datetime import datetime
 from FastaIndex import FastaIndex
 from pyScaf import percentile, median, mean, pstdev, _check_dependencies
 
-def _lastal(fasta, ref, norearrangements=0, protein=0):
+def _lastal(fasta, ref, threads=4, norearrangements=0, protein=0):
     """Start LAST in local mode and with FastQ input (-Q 1)."""
     # build db
     dbcmd = "lastdb %s %s"
     if protein:
         dbcmd = "lastdb -p %s %s"
     if not os.path.isfile(ref+".suf"):
-        os.system(cmd%(ref, ref))
+        os.system(dbcmd%(ref, ref))
     # run last -s2 both strands for protein
     args1 = ["lastal", "-s2", "-P", str(threads), ref, fasta] # "-fTAB", 
     args2 = ["last-split"]
@@ -30,7 +30,7 @@ def _lastal(fasta, ref, norearrangements=0, protein=0):
     proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stderr=sys.stderr)
     proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stderr=sys.stderr, stdin=proc1.stdout)
     proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stderr=sys.stderr, stdin=proc2.stdout)
-    return proc3
+    return proc3.stdout
 
 def _is_rearranged(algs, strand):
     """Return True if rearrangement between query and target"""
@@ -42,14 +42,14 @@ def _is_rearranged(algs, strand):
         if algs[i][3] < algs[i-1][3]:
             return True
 
-def get_hits(fasta, ref, identity, overlap, norearrangements, protein):
+def get_hits(fasta, ref, identity, overlap, threads, norearrangements, protein):
     """Resolve & report scaffolds"""
     ## consider splitting into two functions
     ## to facilitate more input formats
     t2hits = {}
     t2size = {}
     q2hits = {}
-    for l in gzip.open(fasta+".tab.gz"): #_lastalal(fasta, ref, norearrangements, protein):
+    for l in _lastal(fasta, ref, threads, norearrangements, protein): #gzip.open(fasta+".tab.gz"): #
         if l.startswith('#'):
             continue
         # unpack
@@ -116,7 +116,7 @@ def split_many2one(algs, tsize, maxOverlap=.66):
     a = np.zeros((len(algs), tsize), dtype='bool')
     for i in range(len(algs)):
         a[i][algs[i][0]:algs[i][1]] = True
-    # check overlaps between algs and store each overlap into seperate block
+    # check overlaps between algs and store each overlap into separate block
     uniq = []
     added = set()
     for i in range(0, len(algs)-1):
@@ -126,11 +126,10 @@ def split_many2one(algs, tsize, maxOverlap=.66):
         uniq.append([algs[i]])
         for ii in range(i+1, len(algs)):
             if np.all(a[(i, ii),], axis=0).sum() > maxOverlap*a[(i, ii),].sum(axis=1).min():
-                #print "", np.all(a[(i, ii),], axis=0).sum(), a[(i, ii),].sum(axis=1).min(), algs[i], algs[ii]
                 # update
                 uniq[-1].append(algs[ii])
                 added.add(algs[ii][2])
-    #print uniq
+    #print uniq - here smaller contigs overlapping with bigger one can be thrown into one one cluster and in effect not connected
     # [[(1056, 1818, 'TRINITY_DN29363_c1_g1_i2', 267, 1026, 1405, 1.0, 0.5549),
     #   (1081, 1304, 'TRINITY_DN29363_c0_g1_i1', 5, 228, 246, 0.0, 0.4529),
     #   (1467, 1818, 'TRINITY_DN29363_c1_g1_i1', 18, 369, 748, 1.0, 0.6752)]]            
@@ -149,29 +148,73 @@ def split_many2one(algs, tsize, maxOverlap=.66):
         for i, _u in enumerate(sorted(u, key=lambda x: x[-1], reverse=1)):
             _algs[i].append(_u)
 
-    # remove contigs covered completely by bigger conting overhang
+    # remove contigs covered completely by bigger contig overhang
     # 12289 2494 ENSDART00000057044.7 2687
     #  [(71, 265, 'TRINITY_DN1115_c0_g2_i1', 390, 584, 584, 0.0, 1.0),
-    #   (300, 2138, 'TRINITY_DN8977_c0_g1_i2', 304, 2139, 2246, 0.0, 0.9619)]        
+    #   (300, 2138, 'TRINITY_DN8977_c0_g1_i2', 304, 2139, 2246, 0.0, 0.9619)]
+    
     return _algs
-            
+
+def report_scaffold(faidx, added, out, name, algs, protein, linelen=60):
+    """Save scaffold FastA to file.
+
+    Only aligned fraction is reported, the rest is treated as gaps.
+    This does not apply to terminal overhangs. 
+    """
+    seq = []
+    pend = gap = 0
+    for i, (tstart, tend, q, qstart, qend, qsize, reverse, _identity) in enumerate(algs):
+        # store gap
+        seq.append('N'*gap)
+        # update start and end
+        if not i:
+            qstart = 0
+        elif i+1==len(algs):
+            qend = qsize
+        # solve overlapping ends
+        if tstart<pend:
+            qstart += pend-tstart
+        # store seq
+        seq.append(faidx.get_sequence(q, reverse)[qstart:qend])
+        # update gap & pend
+        gap = tstart - pend
+        pend = tend
+        # update added
+        added[q] += 1
+    # store
+    seq = "".join(seq)
+    out.write(">%s [%s bp]\n%s\n"%(name, len(seq), "\n".join(seq[s:s+linelen] for s in range(0, len(seq), linelen))))
+    return added
+    
 def scaffold_transcripts(fasta, ref, out, threads, \
                          identity, overlap, maxgap, norearrangements=0, log=sys.stderr, protein=0):
     """Scaffold de novo transcripts using reference transcripts/peptides"""
     # get hits
-    t2hits, t2size = get_hits(fasta, ref, identity, overlap, norearrangements, protein)
+    t2hits, t2size = get_hits(fasta, ref, identity, overlap, threads, norearrangements, protein)
 
+    # generate scaffolds
     i = k = 0
+    faidx = FastaIndex(fasta)
+    added = {c: 0 for c in faidx}
     for i, (t, algs) in enumerate(t2hits.iteritems(), 1):
         # recognise many-to-one alignements
         algs = split_many2one(sorted(algs), t2size[t])
         for _algs in algs:
-            # skip singletons
-            if len(_algs)<2:
+            # skip singletons and overlap below cut-off
+            if len(_algs)<2:# or sum(a[1]-a[0] for a in _algs)<overlap*t2size[t]:
                 continue
             k += 1
-            print i, k, t, t2size[t], _algs
+            sys.stderr.write("%s / %s  %s   \r"%(i, k, t))#, t2size[t], _algs
+            name = 'scaffold{0:07d}'.format(k) + " %s:%s-%s %s"%(t, _algs[0][0], _algs[-1][1], t2size[t])
+            added = report_scaffold(faidx, added, out, name, _algs, protein)
 
+    # store unscaffolded contigs
+    for c in faidx:
+        if not added[c]:
+            out.write(faidx[c])
+
+    sys.stderr.write("Joined %s out of %s contigs into %s scaffolds\n"%(len([c for c in added if added[c]]), len(faidx), k))
+            
 def main():
     import argparse
     parser  = argparse.ArgumentParser(description=desc, epilog=epilog, \

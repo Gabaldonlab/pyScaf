@@ -57,6 +57,12 @@ Dependencies
 ~~~~~~~~~~~~
 - `LAST v700+ <http://last.cbrc.jp/>`_
 - `FastaIndex <https://github.com/lpryszcz/FastaIndex>`_
+- `minimap2 <https://github.com/lh3/minimap2>`_
+
+```bash
+git clone --recursive https://github.com/lpryszcz/pyScaf
+cd pyScaf && (cd minimap2 && make)
+```
 
 Parameters
 ~~~~~~~~~~
