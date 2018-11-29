@@ -1,0 +1,434 @@
+#!/usr/bin/env python
+desc="""Get transcripts from long reads
+- all-vs-all alignment
+- clustering and isoform/paralogs separation
+- correction with long & short-reads
+"""
+epilog="""Author:
+l.p.pryszcz+git@gmail.com
+
+Warsaw, 13/06/2017
+"""
+
+import os, sys, gzip, resource, subprocess, pysam
+import numpy as np
+from datetime import datetime
+
+class SimplerGraph(object):
+    """Undirected Graph class."""
+    def __init__(self, vertices=[]):
+        """Construct a graph with the given vertices
+        """
+        # store vertex as IDs (int) rather than full names for memory efficiency
+        self.id2vertex, self.vertex2id = {}, {}
+        self._neighbours = {}
+        for i, vertex in enumerate(vertices):
+            self._neighbours[i] = set()
+            self.id2vertex[i], self.vertex2id[vertex] = vertex, i
+
+    def add_line(self, v1, v2):
+        """Add a line from v1 to v2 (with no error checking!)
+        """
+        self._neighbours[self.vertex2id[v1]].add(self.vertex2id[v2])
+        self._neighbours[self.vertex2id[v2]].add(self.vertex2id[v1])
+                        
+    def get_clusters(self, minsize=1):
+        """Return connected nodes having given feature (key: value)."""
+        clusters, processed= [], set()
+        for v in self._neighbours:
+            if v not in processed:
+                clusters.append([v]) #[self.id2vertex[v]])
+                processed.add(v)
+            i = 0
+            while i<len(clusters[-1]): 
+                v = clusters[-1][i] #self.id2vertex[clusters[-1][i]]
+                for v2 in self._neighbours[v]:
+                    if v2 in processed:
+                        continue
+                    clusters[-1].append(v2) #self.id2vertex[v2])
+                    processed.add(v2)
+                i += 1
+        return [[self.id2vertex[v] for v in cluster] for cluster in clusters if len(cluster)>=minsize]
+
+def _minimap2(fasta, threads=3, k=10, log=sys.stderr):
+    """Start minimap2"""
+    # run minimap -m100 -g10000 -r2000 --max-chain-skip 25
+    args1 = ["minimap2", "-Hk%s"%k, "-t%s"%threads, "-Xw5", fasta, fasta]
+    proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stderr=log)
+    return proc1.stdout
+
+def get_clusters_minimap2(outdir, fasta, identity=0.25, overlap=0.66,
+                          minlen=500, threads=4, minsize=1, log=sys.stderr):
+    """Return dictionary all-vs-all matches from PAF file as {q: {t1, t2, t3}, }.
+    If paf.gz doesn't exists, run minimap2 and process on the fly. 
+    """
+    # get handle
+    if os.path.isfile(fasta+".paf.gz"):
+        if log: log.write(" parsing matches from file...\n")
+        handle = gzip.open(fasta+".paf.gz")
+    else:
+        if log: log.write(" running minimap2...\n")
+        handle = _minimap2(fasta, threads, log=log)
+    # init graph with all reads
+    faidx = pysam.FastaFile(fasta)
+    g = SimplerGraph([r for i, r in enumerate(faidx.references) if faidx.lengths[i]>=minlen])
+    # store matches in a graph
+    for i, l in enumerate(handle, 1):
+        if log and not i%1e5: log.write("  %s %s   \r"%(i, get_memusage()))
+        # unpack
+        (q, qsize, qstart, qend, qstrand, t, tsize, tstart, tend, matches, algLengths, mapq) = l.split()[:12]
+        if q==t: continue
+        (matches, qstart, qend, qsize, tstart, tend, tsize) = map(int, (matches, qstart, qend, qsize, tstart, tend, tsize))
+        # target always larger
+        if qsize>tsize or qsize==tsize and q>t:
+            q, qsize, qstart, qend, t, tsize, tstart, tend = t, tsize, tstart, tend, q, qsize, qstart, qend
+        if qsize<minlen: continue
+        # filter by identity and overlap
+        qalg = qend - qstart
+        _identity = 1.0 * matches / qalg 
+        _overlap = 1.0 * qalg / qsize
+        # store match
+        if _identity >= identity and _overlap >= overlap:
+            g.add_line(q, t)
+    # get clusters & report
+    if log:
+        log.write("  %s matches processed.\n%s"%(i, logger("Clustering...")))
+    k = 0
+    clusters = g.get_clusters(minsize)
+    outclusters = open(os.path.join(outdir, "clusters.txt"), "w")
+    for i, cluster in enumerate(clusters, 1):
+        k += len(cluster)
+        fn = "cluster%6s.fa"%i
+        fn = fn.replace(" ", "0")
+        outclusters.write("%s\t%s\t%s\n"%(fn, len(cluster), " ".join(cluster)))
+        with open(os.path.join(outdir, fn), "w") as out:
+            for q in cluster:
+                out.write(">%s\n%s\n"%(q, faidx[q]))
+    log.write(" %s seqs in %s cluster(s)\n"%(k, i))
+    outclusters.close()
+    print(sorted(map(len, clusters), reverse=1)[:20])
+    return clusters 
+
+def get_clusters_minimap2_mcl(outdir, fasta, threads=4, log=sys.stderr):
+    """Compute all-vs-all matches with minimap2 and cluster with mcl"""
+    # init graph with all reads
+    faidx = pysam.FastaFile(fasta)
+    # minimap2
+    paffn = "%s.paf.gz"%fasta
+    if not os.path.isfile(paffn):
+        cmd1 = "minimap2 -Hk10 -Xw5 -t%s %s %s 2> %s.log | gzip > %s"%(threads, fasta, fasta, paffn, paffn)
+        if log: log.write(" running minimap2...\n  %s\n"%cmd1)
+        os.system(cmd1)
+    # mcl
+    mclfn = "%s.mcl"%paffn
+    if not os.path.isfile(mclfn):
+        cmd2 = "zcat %s | cut -f1,6,10 | mcl - -I 2.0 --abc -te %s -o %s 2> %s.log"%(paffn, threads, mclfn, mclfn)
+        if log: log.write(" running mcl...\n  %s\n"%cmd2)
+        os.system(cmd2)
+    # get clusters
+    k = 0    
+    clusters = []
+    outclusters = open(os.path.join(outdir, "clusters.txt"), "w")
+    for i, l in enumerate(open(mclfn), 1):
+        cluster = l[:-1].split()
+        clusters.append(cluster)
+        k += len(cluster)
+        fn = "cluster%6s.fa"%i
+        fn = fn.replace(" ", "0")
+        outclusters.write("%s\t%s\t%s\n"%(fn, len(cluster), " ".join(cluster)))
+        with open(os.path.join(outdir, fn), "w") as out:
+            for q in cluster:
+                out.write(">%s\n%s\n"%(q, faidx[q]))
+    log.write(" %s seqs in %s cluster(s)\n"%(k, i))
+    outclusters.close()
+    print(sorted(map(len, clusters), reverse=1)[:20])
+    return clusters
+    
+def get_hits_minimap2_sam(fasta, identity=0.7, overlap=0.95, threads=4, maxindel=20):
+    """Return hits from SAM file. Works with minimap2 sam files!! UNFINISHED!"""
+    q2hits = {}
+    sam = pysam.AlignmentFile(fasta+".k11.sam.gz")
+    t2size = {r: l for r, l in zip(sam.references, sam.lengths)}
+    for r in sam: 
+        q, t = r.qname, sam.references[r.rname]
+        # target always larger
+        qstart, qend = r.qstart, r.qend
+        if t2size[q]>t2size[t] or t2size[q]==t2size[t] and q>t:
+            q, qstart, qend, t, = t, r.reference_start, r.reference_end, q
+            
+        # unload cigar
+        c2b = get_cigar2bases(r.cigar)
+        # skip if too much clipped
+        if 4 in c2b and max(c2b[4])>100:
+            continue
+        # skip if indel>maxindel
+        if 1 in c2b and max(c2b[1])>maxindel or 2 in c2b and max(c2b[2])>maxindel:
+            continue
+        qalg = qend - qstart
+        score = 0
+        # filter by identity and overlap
+        _identity = 1.0 - _get_dv(r.tags)
+        _overlap = 1.0 * qalg / t2size[q]
+        if _identity < identity or _overlap < overlap:
+            continue
+
+        # store q2hits
+        algdata = (score, qalg, _identity, _overlap)
+        if q not in q2hits:
+            q2hits[q] = [(t, algdata)]
+        else:
+            q2hits[q].append((t, algdata))
+
+    return q2hits, t2size
+    
+def _lastal(fasta, ref, threads=4):
+    """Start LAST in local global and with FastQ input (-Q 1)."""
+    # build db
+    dbcmd = "lastdb %s %s"
+    if not os.path.isfile(ref+".suf"):
+        os.system(dbcmd%(ref, ref))
+    # run last -s2 both strands for protein -C1? -s1?
+    args1 = ["lastal", "-a1", "-b1", "-T1", "-f TAB", "-P", str(threads), ref, fasta] # "-fTAB", 
+    args2 = ["awk '$6>$11 || $6==$11 && $2>$7'"]
+    args3 = ["gzip"]
+    proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stderr=sys.stderr)
+    proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stderr=sys.stderr, stdin=proc1.stdout)
+    proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stderr=sys.stderr, stdin=proc2.stdout)
+    return proc3.stdout
+
+def get_hits(fasta, identity=0.3, overlap=0.8, threads=4):
+    """Return hits from TAB file."""
+    t2size = {}
+    q2hits = {}
+    for l in gzip.open(fasta+".C2.global.tab.gz"): #_lastal(fasta, ref, threads): # 
+        if l.startswith('#'):
+            continue
+        # unpack
+        (score, t, tstart, talg, tstrand, tsize, q, qstart, qalg, qstrand, qsize, blocks) = l.split()[:12]
+        (score, qstart, qalg, qsize, tstart, talg, tsize) = map(int, (score, qstart, qalg, qsize, tstart, talg, tsize))
+        # filter smaller
+        if qsize>tsize or qsize==tsize and q>t:
+            continue
+        # filter by identity and overlap - score is +1/-1 for match/mismatch&indel
+        mismatches = (qalg - score) / 2.0
+        _identity = 1 - 1.0 * mismatches / qalg # 1.0 * (qalg + score) / qalg / 2
+        _overlap = 1.0 * qalg / qsize
+        if _identity < identity or _overlap < overlap:
+            continue
+
+        # store t2size
+        if t not in t2size:
+            t2size[t] = tsize
+        if q not in t2size:
+            t2size[q] = qsize
+   
+        # store q2hits
+        algdata = (score, qalg, _identity, _overlap)
+        if q not in q2hits:
+            q2hits[q] = [(t, algdata)]
+        else:
+            q2hits[q].append((t, algdata))
+
+    print(len(q2hits), len(t2size))
+    return q2hits, t2size
+
+def get_cigar2bases(cigartuples):
+    """Return cigar2base dictionary"""
+    cigar2bases = {}
+    for c, b in cigartuples:
+        if c in cigar2bases:
+            cigar2bases[c].append(b)
+        else:
+            cigar2bases[c]=[b]
+    return cigar2bases
+
+def _get_dv(tags):
+    dv = 1.0
+    for t, v in tags:
+        if t=='dv': return v
+    return dv
+    
+    
+def get_hits_last_sam(fasta, identity=0.7, overlap=0.95, threads=4, maxindel=20):
+    """Return hits from SAM file. Works with LAST sam files!!"""
+    q2hits = {}
+    sam = pysam.AlignmentFile(fasta+".global.sam.gz")
+    t2size = {r: l for r, l in zip(sam.references, sam.lengths)}
+    for r in sam: 
+        q, t = r.qname, sam.references[r.rname]
+        # target always larger
+        if t2size[q]>t2size[t] or t2size[q]==t2size[t] and q>t:
+            continue
+        # unload cigar
+        c2b = get_cigar2bases(r.cigar)
+        # skip if too much clipped
+        if 5 in c2b and max(c2b[5])>100:
+            continue
+        # skip if indel>maxindel
+        if 1 in c2b and max(c2b[1])>maxindel or 2 in c2b and max(c2b[2])>maxindel:
+            continue
+        qalg = r.qend - r.qstart
+        score = matches = sum(c2b[7])
+        # filter by identity and overlap
+        _identity = 1.0 * matches / qalg
+        _overlap = 1.0 * qalg / t2size[q]
+        if _identity < identity or _overlap < overlap:
+            continue
+
+        # store q2hits
+        algdata = (score, qalg, _identity, _overlap)
+        if q not in q2hits:
+            q2hits[q] = [(t, algdata)]
+        else:
+            q2hits[q].append((t, algdata))
+    return q2hits, t2size
+        
+def _get_best_cluster(hits, clusters, q2cluster, t2size):
+    """Return best target among clusters"""
+    # alg to the longest isoform first
+    for t, algdata in sorted(hits, key=lambda x: t2size[x[0]], reverse=1):
+        if t in clusters:
+            return t
+        elif q2cluster and t in q2cluster:
+            return q2cluster[t]
+
+def get_clusters(outdir, fasta, q2hits, t2size, join_by_other_members=False):
+    """Return clusters or sequences based on all-vs-all matches.
+    Clusters are stored in outdir/clusterXXXXXX.fa files. 
+
+    If join_by_other_members is True, sequences are added to cluster
+    if another member of the cluster is matched (more relaxed matches).
+    If it's false, then valid match to the longest sequence in the
+    cluster is required. 
+    """
+    clusters = {}
+    q2cluster = {}
+    for q, tsize in sorted(t2size.iteritems(), key=lambda x: x[1], reverse=1):
+        # create new cluster
+        if q not in q2hits:
+            clusters[q] = [q]
+            q2cluster[q] = q
+            continue
+        # add to existing cluster
+        t = _get_best_cluster(q2hits[q], clusters, q2cluster, t2size) 
+        if t:    
+            clusters[t].append(q)
+            if join_by_other_members:
+                q2cluster[q] = t
+        else:
+            clusters[q] = [q]
+            if join_by_other_members:
+                q2cluster[q] = q
+    print(len(clusters), len(q2cluster))
+    faidx = pysam.FastaFile(fasta)
+    for i, (t, cl) in enumerate(sorted(clusters.iteritems(), key=lambda x: t2size[x[0]], reverse=1), 1):
+        print i, t, t2size[t], len(cl)
+        fn = "cluster%6s.fa"%i
+        fn = fn.replace(" ", "0")
+        with open(os.path.join(outdir, fn), "w") as out:
+            for q in cl:
+                out.write(">%s\n%s\n"%(q, faidx[q]))
+    return clusters
+    
+def long2transcripts(outdir, fasta, threads, identity, overlap, maxindel, log=sys.stderr):
+    """Scaffold de novo transcripts using reference transcripts/peptides"""
+    # load fasta index
+    faidx = pysam.FastaFile(fasta)
+    t2size = {r: l for r, l in zip(faidx.references, faidx.lengths)}    
+
+    if not os.path.isdir(outdir):
+        os.makedirs(outdir)
+        
+    if log: log.write(logger("Generating clusters for %s seqs..."%len(faidx)))
+    #clusters = get_clusters_minimap2(outdir, fasta, threads=threads, log=log)
+    clusters = get_clusters_minimap2_mcl(outdir, fasta, threads, log)
+    
+    if log: log.write(logger("Done!"))
+    return clusters
+    
+def _check_executable(cmd):
+    """Check if executable exists."""
+    p = subprocess.Popen("type " + cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return "".join(p.stdout.readlines())
+
+def _check_dependencies(dependencies):
+    """Return error if wrong software version"""
+    warning = 0
+    info = "[WARNING] Old version of %s: %s. Update to version %s+!\n"
+    for cmd, version in dependencies.items():
+        out = _check_executable(cmd)
+        if "not found" in out:
+            warning = 1
+            sys.stderr.write("[ERROR] %s\n"%out)
+        elif version:
+            p = subprocess.Popen([cmd, '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            out = "".join(p.stdout.readlines())
+            curver = out.split()[-1]
+            if not curver.isdigit():
+                warning = 1
+                sys.stderr.write("[WARNING] Problem checking %s version: %s\n"%(cmd, out))
+            elif int(curver)<version:
+                warning = 1
+                sys.stderr.write(info%(cmd, curver, version))
+                
+    message = "Make sure you have installed all dependencies from https://github.com/lpryszcz/pyScaf#dependencies !"
+    if warning:
+        sys.stderr.write("\n%s\n\n"%message)
+        sys.exit(1)
+
+def get_memusage():
+    return "[%5i Mb] "%(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024, )            
+
+def logger(mssg):
+    timestamp = "[%s]"% datetime.ctime(datetime.now())
+    return "%s %s %s\n"%(timestamp, mssg, get_memusage())
+    
+def main():
+    import argparse
+    parser  = argparse.ArgumentParser(description=desc, epilog=epilog, \
+                                      formatter_class=argparse.RawTextHelpFormatter)
+  
+    #parser.add_argument("-v", dest="verbose",  default=False, action="store_true", help="verbose")    
+    parser.add_argument('--version', action='version', version='0.10a')
+    parser.add_argument("-f", "--fasta", required=1, help="reads FASTA file")
+    parser.add_argument("-o", "--outdir", default='long2transcripts', help="output dir [%(default)s]")
+    parser.add_argument("-t", "--threads", default=4, type=int, help="max no. of threads to run [%(default)s]")
+    parser.add_argument("--log", default=sys.stderr, type=argparse.FileType('w'), help="output log to [stderr]")
+    parser.add_argument("-i", "--maxindel", default=20, type=int, help="max allowed indel [%(default)s]")
+    parser.add_argument("--identity", default=0.50, type=float, help="min. identity [%(default)s]")
+    parser.add_argument("--overlap", default=0.95, type=float, help="min. overlap  [%(default)s]")
+    #parser.add_argument("--test", action='store_true', help="test run")
+    
+    '''# kmer maxclip
+    refo = parser.add_argument_group('Reference-based scaffolding options')
+    #refo.add_argument("-r", "--ref", "--reference", required=1, help="reference transcripts FastA file")
+    refo.add_argument("--identity", default=0.33, type=float, help="min. identity [%(default)s]")
+    refo.add_argument("--overlap", default=0.33, type=float, help="min. overlap  [%(default)s]")
+    #refo.add_argument("-g", "--maxgap", default=100, type=int, help="max. distance between adjacent contigs []")
+    #refo.add_argument("--norearrangements", action='store_true', help="high identity mode (rearrangements not allowed)")
+    '''
+    # print help if no parameters
+    if len(sys.argv)==1:
+        parser.print_help()
+        sys.exit(1)
+    o = parser.parse_args()
+    #if o.verbose:
+    o.log.write("Options: %s\n"%str(o))
+
+    
+    # check if all executables exists & in correct versions
+    dependencies = {'lastal': 959, 'lastdb': 959, 'minimap2': 0}
+    _check_dependencies(dependencies)
+
+    #         memusage = "[%5i Mb] "%(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024, )
+    long2transcripts(o.outdir, o.fasta, o.threads, o.identity, o.overlap, o.maxindel, o.log)
+            
+if __name__=='__main__': 
+    t0 = datetime.now()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.stderr.write("\nCtrl-C pressed!      \n")
+    dt = datetime.now()-t0
+    sys.stderr.write("#Time elapsed: %s\n"%dt)
+    
