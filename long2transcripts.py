@@ -17,125 +17,27 @@ Warsaw, 2/11/2018
 import glob, os, sys, gzip, resource, subprocess, pysam
 import numpy as np
 from datetime import datetime
+from multiprocessing import Pool
 
-# BATCH processing
 def _minimap2_mcl(fasta, threads=1):
     """Align globally with minimap2 and cluster with mcl."""
-    args1 = ["minimap2", "-x ava-ont", "-t %s" %threads, fasta, fasta] 
+    opts = "-Hk9 -Xw5 -m100 -g10000 -r2000 --max-chain-skip 25".split() 
+    args1 = ["minimap2", "-t %s" %threads, fasta, fasta] + opts # ["-xava-ont", ]
     args2 = ["cut", "-f1,6,10"]
-    args3 = ["mcl", "-", "-I 2.0", "--abc", "-te %s"%threads]
-    #print(" | ".join(" ".join(a) for a in (args1, args2)))
+    args3 = ["mcl", "-", "-o", "-", "-I", "2.0", "--abc", "-te", "%s"%threads]
+    #print(" | ".join(" ".join(a) for a in (args1, args2, args3)))
     proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stderr=open(fasta+".minimap2.log", "w"))
     proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
     proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=open(fasta+".mcl.log", "w"))
     return proc3.stdout
 
-def get_clusters_from_batch(fasta, threads=1, log=sys.stderr):
-    """Compute all-vs-all matches with minimap2 and cluster with mcl"""
-    faidx = pysam.FastaFile(fasta)
-    # get clusters
-    k = 0
-    #seq2cluster = {}
-    clusters, clusterfnames = [], []
-    outclusters = open("%s.clusters.txt"%fasta, "w")
-    for i, l in enumerate(_minimap2_mcl(fasta, threads), 1):
-        #for seq in l[:-1].split():
-        #    seq2cluster[seq] = i
-        k += len(cluster)
-        fn = "cluster%6s.fa"%i
-        fn = fn.replace(" ", "0")
-        outclusters.write("%s\t%s\t%s\n"%(fn, len(cluster), " ".join(cluster)))
-        clusterfn = "%s.%s"%(fasta, fn)  #os.path.join(outdir, fn)
-        with open(clusterfn, "w") as out:
-            for q in cluster:
-                out.write(">%s\n%s\n"%(q, faidx[q]))
-        clusterfnames.append(clusterfn)
-    log.write(" %s seqs in %s cluster(s)\n"%(k, i))
-    outclusters.close()
-    #print(sorted(map(len, clusters), reverse=1)[:20])
-    return clusterfnames
-
-def batch2clusters(fasta, identity, overlap, threads, maxindel):
-    """Get transcripts from batch of reads"""
-    clusterfnames = get_clusters_from_batch(fasta, threads)
-    
-    for fn in clusterfnames:
-        if log: log.write(" %s   \r"%fn)
-        faidx = pysam.FastaFile(fn)
-        if len(faidx)<2:
-            # symlink as OUTDIR/FASTA.racon.fa -> FASTA
-            os.symlink(os.path.basename(fn), os.path.join(os.path.dirname(fn), os.path.basename(fn)+".racon.fa"))
-            continue
-        # store longest
-        q2hits, t2size = get_hits_last_sam(fn, identity, overlap, threads, maxindel)
-        get_clusters(fn, q2hits, t2size, save_subcluster=False)
-
-    cmd = "cat %s*.longest*.fa > %s.transcripts.fa"%(fasta, fasta)
-    os.system(cmd)
-
-def fasta_parser(handle):
-    """Simple fasta parser"""
-    data = []
-    for l in handle:
-        if l.startswith(">"):
-            if data:
-                yield data
-            data = [l, ]
-        else:
-            data.append(l)
-    if data:
-        yield data
-    
-def fastq_parser(handle):
-    """Simple fastq parser assuming 4 lines per entry returning header and sequence"""
-    data = []
-    for l in handle:
-        data.append(l)
-        if len(data)==4:
-            yield data[:2]
-            data = []
-    if len(data)==4:
-        yield data[:2]
-    
-def process_in_batches(outdir, fasta, identity, overlap, threads, maxindel, maxseq=1000000):
-    """Process reads in batches"""
-    handle = open(fasta)
-    if fasta.endswith('.gz'):
-        handle = gzip.open(fasta)
-        fasta = fasta[:-3] # strip .gz
-    parser = fasta_parser(handle)
-    if fasta.endswith(('.fq', '.fastq')):
-        parser = fastq_parser(handle) # 
-
-    fastas = []
-    for i, r in enumerate(parser):
-        if not i%maxseq:
-            subdir = "batches/%4s"%(len(fastas)+1, )
-            subdir = subdir.replace(' ', '0')
-            fn = os.path.join(outdir, subdir, "reads.fa")
-            os.makedirs(os.path.dirname(fn))
-            fastas.append(fn)
-            out = open(fn, "w")
-        # write
-        out.write(">"+"".join(r)[1:]) # fastq @ fasta >, thus skip first element
-    out.close()
-
-    # process all reads
-    for fn in fastas:
-        batch2clusters(fasta, identity, overlap, threads, maxindel)
-
-    cmd = "cat %s/batches/*/reads.transcripts.fa > %s/batches.transcripts.fa"%(outdir, outdir)
-    os.system(cmd)
-    return "%s/batches.transcripts.fa"%outdir
-    
-# GENERAL
 def _lastal2sam(fasta, threads=4):
     """Align globally with last and report SAM."""
     # build db
     dbfn = "%s.lastdb"%fasta
-    os.system("lastdb %s %s"%(dbfn, fasta)) #if not os.path.isfile(fasta+".suf"):
+    os.system("lastdb -P%s %s %s"%(threads, dbfn, fasta)) #if not os.path.isfile(fasta+".suf"):
     # run last -s2 both strands for protein -C1? -s1? "-f TAB", 
-    args1 = ["lastal", "-a1", "-b1", "-T1", "-P", str(threads), dbfn, fasta] # "-fTAB", FastQ input (-Q 1)
+    args1 = ["lastal", "-s1", "-a1", "-b1", "-T1", "-P%s"%threads, dbfn, fasta] # "-fTAB", FastQ input (-Q 1)
     args2 = ["maf-convert", "sam"]
     args3 = ["samtools", "view", "-ShT", fasta]
     #print(" | ".join(" ".join(a) for a in (args1, args2, args3)))
@@ -157,14 +59,8 @@ def get_cigar2bases(cigartuples):
 def get_hits_last_sam(fasta, identity=0.7, overlap=0.95, threads=4, maxindel=20, log=''):
     """Return hits from SAM file. Works with LAST sam files!!"""
     # get handle
-    if not os.path.isfile(fasta+".sam.gz"):
-        #handle = _lastal2sam(fasta, threads)
-        cmd = "lastdb %s.lastdb %s; "%(fasta, fasta)
-        cmd += "lastal -a1 -b1 -T 1 -P4 %s.lastdb %s | maf-convert sam | samtools view -ShT %s | gzip > %s.sam.gz"%(fasta, fasta, fasta, fasta)
-        if log: log.write("  %s\n"%cmd)
-        os.system(cmd)
     q2hits = {}
-    sam = pysam.AlignmentFile(fasta+".sam.gz") 
+    sam = pysam.AlignmentFile(_lastal2sam(fasta, threads)) # has to be processed by samtools
     t2size = {r: l for r, l in zip(sam.references, sam.lengths)}
     for r in sam: 
         q, t = r.qname, sam.references[r.rname]
@@ -197,7 +93,7 @@ def get_hits_last_sam(fasta, identity=0.7, overlap=0.95, threads=4, maxindel=20,
     for fn in glob.glob("%s.lastdb.*"%fasta):
         os.unlink(fn)
     return q2hits, t2size
-        
+    
 def _get_best_cluster(hits, clusters, t2size):
     """Return best target among clusters"""
     # alg to the longest isoform first
@@ -205,11 +101,9 @@ def _get_best_cluster(hits, clusters, t2size):
         if t in clusters:
             return t
 
-def get_clusters(fasta, q2hits, t2size, save_subcluster=True):
-    """Return list of fnames with longest sequence for clusters of sequences based on all-vs-all matches.
-    
-    Clusters are stored in FASTA.subclusterXXXX.fa files if save_subcluster=True. 
-    """
+def get_clusters(fasta, identity, overlap, threads, maxindel):
+    """Return longest sequence for each clusters of sequences based on all-vs-all matches."""
+    q2hits, t2size = get_hits_last_sam(fasta, identity, overlap, threads, maxindel)
     clusters = {}
     for q, tsize in sorted(t2size.iteritems(), key=lambda x: x[1], reverse=1):
         # create new cluster
@@ -223,84 +117,148 @@ def get_clusters(fasta, q2hits, t2size, save_subcluster=True):
         else:
             clusters[q] = [q]
 
-    fnames = []
-    #print(len(clusters))#, len(q2cluster))
     faidx = pysam.FastaFile(fasta)
     for i, (t, cl) in enumerate(sorted(clusters.iteritems(), key=lambda x: t2size[x[0]], reverse=1), 1):
-        #print i, t, t2size[t], len(cl)
         # store longest read are representative
         ifn = ".longest%4s.fa"%i
         ifn = ifn.replace(" ", "0")
         with open(fasta+ifn, "w") as out:
             out.write(">%s\n%s\n"%(t, faidx[t]))
-        # just save longest if not save_subcluster
-        if not save_subcluster:
-            continue
-        # don't store subcluster & symlink if small cluster
-        if len(cl)<2:
-            # symlink as OUTDIR/FASTA.racon.fa -> FASTA
-            os.symlink(os.path.basename(fasta+ifn), os.path.join(os.path.dirname(fasta+ifn), os.path.basename(fasta+ifn)+".racon.fa"))
-            continue
-        # store all reads
-        fn = ifn.replace("longest", "subcluster")
-        with open(fasta+fn, "w") as out:
-            for q in cl:
-                out.write(">%s\n%s\n"%(q, faidx[q]))
-        fnames.append((fasta+ifn, fasta+fn))
-    return fnames #clusters
 
-def correct_racon(fasta, sam, reads, minq=7, log=0):
+def batch2clusters(fasta, identity, overlap, threads, maxindel, log=sys.stderr, minCluster=4):
+    """Compute all-vs-all matches with minimap2 and cluster with mcl"""
+    faidx = pysam.FastaFile(fasta)
+    singletons = set(faidx.references)
+    # get clusters
+    i = k = 0
+    clusterfnames = []
+    outclusters = open("%s.clusters.txt"%fasta, "w")
+    for l in _minimap2_mcl(fasta, threads):
+        cluster = l[:-1].split()
+        if len(cluster)<minCluster:
+            continue
+        i += 1
+        k += len(cluster)
+        singletons.difference_update(cluster)
+        fn = "cluster%6s.fa"%i
+        fn = fn.replace(" ", "0")
+        outclusters.write("%s\t%s\t%s\n"%(fn, len(cluster), " ".join(cluster)))
+        clusterfn = "%s.%s"%(fasta, fn) 
+        with open(clusterfn, "w") as out:
+            for q in cluster:
+                out.write(">%s\n%s\n"%(q, faidx[q]))
+        clusterfnames.append(clusterfn)
+        # get longest
+        get_clusters(clusterfn, identity, overlap, threads, maxindel)
+        
+    with open("%s.singletons.fa"%fasta, "w") as out:
+        for q in singletons:
+            out.write(">%s\n%s\n"%(q, faidx[q]))
+    log.write(" %s seqs in %s cluster(s) + %s singletons\n"%(k, i, len(singletons)))
+    outclusters.close()
+    cmd = "cat %s*.longest*.fa %s.singletons.fa > %s.transcripts.fa"%(fasta, fasta, fasta)
+    os.system(cmd)
+    return "%s.transcripts.fa"%fasta
+
+def fasta_parser(handle):
+    """Simple fasta parser"""
+    data = []
+    for l in handle:
+        if l.startswith(">"):
+            if data:
+                yield data
+            data = [l, ]
+        else:
+            data.append(l)
+    if data:
+        yield data
+    
+def fastq_parser(handle):
+    """Simple fastq parser assuming 4 lines per entry returning header and sequence"""
+    data = []
+    for l in handle:
+        data.append(l)
+        if len(data)==4:
+            yield data[:2]
+            data = []
+    if len(data)==4:
+        yield data[:2]
+
+def worker(args):
+    fn, identity, overlap, threads, maxindel = args
+    batch2clusters(fn, identity, overlap, threads, maxindel)
+        
+def process_in_batches(outdir, fasta, identity, overlap, threads, maxindel, maxseq=1000000, log=sys.stderr):
+    """Process reads in batches"""
+    handle = open(fasta)
+    if fasta.endswith('.gz'):
+        handle = gzip.open(fasta)
+        fasta = fasta[:-3] # strip .gz
+    parser = fasta_parser(handle)
+    if fasta.endswith(('.fq', '.fastq')):
+        parser = fastq_parser(handle) # 
+
+    fastas = []
+    for i, r in enumerate(parser):
+        if not i%maxseq:
+            subdir = "batches/%4s"%(len(fastas)+1, )
+            subdir = subdir.replace(' ', '0')
+            fn = os.path.join(outdir, subdir, "reads.fa")
+            os.makedirs(os.path.dirname(fn))
+            fastas.append(fn)
+            out = open(fn, "w")
+        # write
+        out.write(">"+"".join(r)[1:]) # fastq @ fasta >, thus skip first element
+    out.close()
+
+    # process all reads
+    if len(fastas)<2:
+        # use all threads locally if only 1 batch
+        for fn in fastas:
+            batch2clusters(fn, identity, overlap, threads, maxindel)
+    else:
+        p = Pool(threads)
+        for fn in p.imap_unordered(worker, [(fn, identity, overlap, 1, maxindel) for fn in fastas]):
+            pass
+
+    outfn = "%s/batches.transcripts.fa"%outdir
+    os.system("cat %s/batches/*/reads.fa.transcripts.fa > %s"%(outdir, outfn))
+    return outfn
+            
+def correct_racon(fasta, reads, sam="", minq=7, threads=4, log=0):
     """Correct longest read with racon"""
+    racon = "%s.racon.fa"%fasta    
+    if os.path.isfile(racon):
+        return racon
+    if not sam or not os.path.isfile(sam):
+        sam = "%s.paf.gz"%fasta
+        cmd0 = "minimap2 -xava-ont -t%s %s %s 2> %s.minimap2.log | gzip > %s"%(threads, fasta, reads, fasta, sam)
+        if log: log.write('  %s\n'%cmd0)
+        os.system(cmd0)
+
     # <sequences> <overlaps> <target sequences>
-    cmd = "racon -u -q %s %s %s %s > %s.racon.fa 2> %s.racon.fa.log"%(minq, reads, sam, fasta, fasta, fasta)
+    cmd = "racon -u -t %s -q %s %s %s %s > %s 2> %s.log"%(threads, minq, reads, sam, fasta, racon, racon)
     if log: log.write('  %s\n'%cmd)
     os.system(cmd)
+    return racon
     
 def long2transcripts(outdir, fasta, threads, identity, overlap, maxindel, maxseq=1000000, log=sys.stderr):
     """Scaffold de novo transcripts using reference transcripts/peptides"""
-    # load fasta index - skip as it takes lots of memory for large files!
-    #faidx = pysam.FastaFile(fasta)
-    #t2size = {r: l for r, l in zip(faidx.references, faidx.lengths)}    
-
     if not os.path.isdir(outdir):
         os.makedirs(outdir)
+    tfn = os.path.join(outdir, "batches.transcripts.fa.transcripts.fa")
+    if not os.path.isfile(tfn):        
+        if log: log.write(logger("Generating clusters in batches..."))
+        batchesfn = process_in_batches(outdir, fasta, identity, overlap, threads, maxindel, maxseq, log)
 
-    transcriptsfn = os.path.join(outdir, "transcripts.fa")
-    if os.path.isfile(transcriptsfn):
-        return transcriptsfn
-        
-    if log: log.write(logger("Generating clusters in batches..."))
-    # combine all transcripts from batches
-    batchesfn = process_in_batches(outdir, fasta, identity, overlap, threads, maxindel, maxseq)
+        # combine all transcripts from batches
+        if log: log.write(logger("Generating clusters from batches..."))
+        tfn = batch2clusters(batchesfn, identity, overlap, threads, maxindel, log, minCluster=2)
 
-    if log: log.write(logger("Generating clusters from batches..."))
-    batch2clusters(batchesfn, identity, overlap, threads, maxindel)
-    return
+    # correct racon
+    tfn = correct_racon(tfn, fasta, threads=threads)
     
-    # get final clusters
-    clusterfnames = get_clusters_from_batch(outdir, batchesfn, threads, log)
-
-    # separate isoforms using all-vs-all LASTal
-    if log: log.write(logger("Separating isoforms from %s clusters..."%len(clusterfnames)))
-    for fn in clusterfnames:
-        if log: log.write(" %s   \r"%fn)
-        faidx = pysam.FastaFile(fn)
-        if len(faidx)<2:
-            # symlink as OUTDIR/FASTA.racon.fa -> FASTA
-            os.symlink(os.path.basename(fn), os.path.join(os.path.dirname(fn), os.path.basename(fn)+".racon.fa"))
-            continue
-        q2hits, t2size = get_hits_last_sam(fn, identity, overlap, threads, maxindel)
-        fnames = get_clusters(fn, q2hits, t2size)
-        # correct with long reads
-        for longestfn, subclusterfn in fnames:
-            correct_racon(longestfn, fn+".sam.gz", subclusterfn)
-
-    # concat all transcripts
-    cmd = "cat %s/*.racon.fa > %s"%(outdir, transcriptsfn)
-    if log: log.write(" %s\n"%cmd)
-    os.system(cmd)
-        
-    return transcriptsfn
+    return tfn
     
 def _check_executable(cmd):
     """Check if executable exists."""
@@ -356,17 +314,10 @@ def main():
     parser.add_argument("--log", default=sys.stderr, type=argparse.FileType('w'), help="output log to [stderr]")
     parser.add_argument("-i", "--maxindel", default=20, type=int, help="max allowed indel [%(default)s]")
     parser.add_argument("--identity", default=0.50, type=float, help="min. identity [%(default)s]")
-    parser.add_argument("--overlap", default=0.95, type=float, help="min. overlap  [%(default)s]")
+    parser.add_argument("--overlap", default=0.95, type=float, help="min. overlap [%(default)s]")
+    parser.add_argument("--maxseq", default=100000, type=float, help="max no. of seq in batch [%(default)s]")
     #parser.add_argument("--test", action='store_true', help="test run")
     
-    '''# kmer maxclip
-    refo = parser.add_argument_group('Reference-based scaffolding options')
-    #refo.add_argument("-r", "--ref", "--reference", required=1, help="reference transcripts FastA file")
-    refo.add_argument("--identity", default=0.33, type=float, help="min. identity [%(default)s]")
-    refo.add_argument("--overlap", default=0.33, type=float, help="min. overlap  [%(default)s]")
-    #refo.add_argument("-g", "--maxgap", default=100, type=int, help="max. distance between adjacent contigs []")
-    #refo.add_argument("--norearrangements", action='store_true', help="high identity mode (rearrangements not allowed)")
-    '''
     # print help if no parameters
     if len(sys.argv)==1:
         parser.print_help()
@@ -381,8 +332,9 @@ def main():
     _check_dependencies(dependencies)
 
     # get transcripts fname (and correct with long reads)
-    tfn = long2transcripts(o.outdir, o.long, o.threads, o.identity, o.overlap, o.maxindel, o.log)
+    tfn = long2transcripts(o.outdir, o.long, o.threads, o.identity, o.overlap, o.maxindel, o.maxseq, o.log)
 
+    # correct pilon
     if o.short and not os.path.isfile("%s.last.bam.fasta"%tfn):
         if not os.path.isfile("%s.last.bam"%tfn):
             if log: log.write(logger("Correcting transcripts with short reads..."))
