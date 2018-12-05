@@ -21,7 +21,7 @@ from multiprocessing import Pool
 
 def _minimap2_mcl(fasta, threads=1):
     """Align globally with minimap2 and cluster with mcl."""
-    opts = "-Hk9 -Xw5 -m100 -g10000 -r2000 --max-chain-skip 25".split() 
+    opts = "-Hk13 -X".split() 
     args1 = ["minimap2", "-t %s" %threads, fasta, fasta] + opts # ["-xava-ont", ]
     args2 = ["cut", "-f1,6,10"]
     args3 = ["mcl", "-", "-o", "-", "-I", "2.0", "--abc", "-te", "%s"%threads]
@@ -36,8 +36,8 @@ def _lastal2sam(fasta, threads=4):
     # build db
     dbfn = "%s.lastdb"%fasta
     os.system("lastdb -P%s %s %s"%(threads, dbfn, fasta)) #if not os.path.isfile(fasta+".suf"):
-    # run last -s2 both strands for protein -C1? -s1? "-f TAB", 
-    args1 = ["lastal", "-s1", "-a1", "-b1", "-T1", "-P%s"%threads, dbfn, fasta] # "-fTAB", FastQ input (-Q 1)
+    # run last -s2 both strands for protein -C1? -s1? "-f TAB"; slowing down ~6x:  "-a1", "-b1"
+    args1 = ["lastal", "-N50", "-a1", "-b1", "-s1", "-T1", "-P%s"%threads, dbfn, fasta] # "-fTAB", FastQ input (-Q 1)
     args2 = ["maf-convert", "sam"]
     args3 = ["samtools", "view", "-ShT", fasta]
     #print(" | ".join(" ".join(a) for a in (args1, args2, args3)))
@@ -102,7 +102,10 @@ def _get_best_cluster(hits, clusters, t2size):
             return t
 
 def get_clusters(fasta, identity, overlap, threads, maxindel):
-    """Return longest sequence for each clusters of sequences based on all-vs-all matches."""
+    """Save longest sequence for each subcluster based on all-vs-all matches.
+    Return number of clusters. 
+    """
+    faidx = pysam.FastaFile(fasta)
     q2hits, t2size = get_hits_last_sam(fasta, identity, overlap, threads, maxindel)
     clusters = {}
     for q, tsize in sorted(t2size.iteritems(), key=lambda x: x[1], reverse=1):
@@ -116,21 +119,22 @@ def get_clusters(fasta, identity, overlap, threads, maxindel):
             clusters[t].append(q)
         else:
             clusters[q] = [q]
-
-    faidx = pysam.FastaFile(fasta)
-    for i, (t, cl) in enumerate(sorted(clusters.iteritems(), key=lambda x: t2size[x[0]], reverse=1), 1):
-        # store longest read are representative
-        ifn = ".longest%4s.fa"%i
-        ifn = ifn.replace(" ", "0")
-        with open(fasta+ifn, "w") as out:
+    # save longest isoform for each subcluster
+    with open("%s.isoforms.fa"%fasta, "w") as out:
+        for i, (t, cl) in enumerate(sorted(clusters.iteritems(), key=lambda x: t2size[x[0]], reverse=1), 1):
             out.write(">%s\n%s\n"%(t, faidx[t]))
-
-def batch2clusters(fasta, identity, overlap, threads, maxindel, log=sys.stderr, minCluster=4):
+    return len(clusters)
+            
+def worker2(args):
+    clusterfn, identity, overlap, threads, maxindel = args
+    return get_clusters(clusterfn, identity, overlap, threads, maxindel)
+    
+def batch2clusters(fasta, identity, overlap, threads, maxindel, log=sys.stderr, minCluster=10):
     """Compute all-vs-all matches with minimap2 and cluster with mcl"""
     faidx = pysam.FastaFile(fasta)
     singletons = set(faidx.references)
     # get clusters
-    i = k = 0
+    i = k = isoforms = 0
     clusterfnames = []
     outclusters = open("%s.clusters.txt"%fasta, "w")
     for l in _minimap2_mcl(fasta, threads):
@@ -149,14 +153,19 @@ def batch2clusters(fasta, identity, overlap, threads, maxindel, log=sys.stderr, 
                 out.write(">%s\n%s\n"%(q, faidx[q]))
         clusterfnames.append(clusterfn)
         # get longest
-        get_clusters(clusterfn, identity, overlap, threads, maxindel)
+        #isoforms += get_clusters(clusterfn, identity, overlap, threads, maxindel)
+    outclusters.close()
         
+    # get longest
+    p = Pool(threads)
+    for _i in p.imap_unordered(worker2, [(fn, identity, overlap, 1, maxindel) for fn in clusterfnames]):
+        isoforms += _i
+    
     with open("%s.singletons.fa"%fasta, "w") as out:
         for q in singletons:
             out.write(">%s\n%s\n"%(q, faidx[q]))
-    log.write(" %s seqs in %s cluster(s) + %s singletons\n"%(k, i, len(singletons)))
-    outclusters.close()
-    cmd = "cat %s*.longest*.fa %s.singletons.fa > %s.transcripts.fa"%(fasta, fasta, fasta)
+    log.write(" %s isoforms from %s seqs in %s clusters (with >=%s members) + %s singletons\n"%(isoforms+len(singletons), k, i, minCluster, len(singletons)))
+    cmd = "cat %s*.isoforms.fa %s.singletons.fa > %s.transcripts.fa"%(fasta, fasta, fasta)
     os.system(cmd)
     return "%s.transcripts.fa"%fasta
 
@@ -196,7 +205,7 @@ def process_in_batches(outdir, fasta, identity, overlap, threads, maxindel, maxs
         fasta = fasta[:-3] # strip .gz
     parser = fasta_parser(handle)
     if fasta.endswith(('.fq', '.fastq')):
-        parser = fastq_parser(handle) # 
+        parser = fastq_parser(handle) #
 
     fastas = []
     for i, r in enumerate(parser):
@@ -212,6 +221,9 @@ def process_in_batches(outdir, fasta, identity, overlap, threads, maxindel, maxs
     out.close()
 
     # process all reads
+    for fn in fastas:
+        batch2clusters(fn, identity, overlap, threads, maxindel)
+    '''
     if len(fastas)<2:
         # use all threads locally if only 1 batch
         for fn in fastas:
@@ -220,7 +232,7 @@ def process_in_batches(outdir, fasta, identity, overlap, threads, maxindel, maxs
         p = Pool(threads)
         for fn in p.imap_unordered(worker, [(fn, identity, overlap, 1, maxindel) for fn in fastas]):
             pass
-
+    '''
     outfn = "%s/batches.transcripts.fa"%outdir
     os.system("cat %s/batches/*/reads.fa.transcripts.fa > %s"%(outdir, outfn))
     return outfn
@@ -256,6 +268,7 @@ def long2transcripts(outdir, fasta, threads, identity, overlap, maxindel, maxseq
         tfn = batch2clusters(batchesfn, identity, overlap, threads, maxindel, log, minCluster=2)
 
     # correct racon
+    if log: log.write(logger("Correcting with long reads..."))
     tfn = correct_racon(tfn, fasta, threads=threads)
     
     return tfn
@@ -315,7 +328,7 @@ def main():
     parser.add_argument("-i", "--maxindel", default=20, type=int, help="max allowed indel [%(default)s]")
     parser.add_argument("--identity", default=0.50, type=float, help="min. identity [%(default)s]")
     parser.add_argument("--overlap", default=0.95, type=float, help="min. overlap [%(default)s]")
-    parser.add_argument("--maxseq", default=100000, type=float, help="max no. of seq in batch [%(default)s]")
+    parser.add_argument("-m", "--maxseq", default=100000, type=float, help="max no. of seq in batch [%(default)s]")
     #parser.add_argument("--test", action='store_true', help="test run")
     
     # print help if no parameters
