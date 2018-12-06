@@ -1,12 +1,8 @@
 #!/usr/bin/env python
 desc="""Get transcripts from long reads
-- all-vs-all alignment
-- clustering and isoform/paralogs separation
+- split in 200K seq batches
+- clustering and isoform/paralogs separation: all-vs-all alignment > mcl > isoform recognition (lastal)
 - correction with long & short-reads
-
-
-TBD: split reads into 1M batches, process with minimap2 + mcl
-and then process resulting transcripts with minimap2 (or lastal) + mcl.
 """
 epilog="""Author:
 l.p.pryszcz+git@gmail.com
@@ -129,7 +125,7 @@ def worker2(args):
     clusterfn, identity, overlap, threads, maxindel = args
     return get_clusters(clusterfn, identity, overlap, threads, maxindel)
     
-def batch2clusters(fasta, identity, overlap, threads, maxindel, log=sys.stderr, minCluster=10):
+def batch2clusters(fasta, identity, overlap, threads, maxindel, log=sys.stderr, minCluster=5):
     """Compute all-vs-all matches with minimap2 and cluster with mcl"""
     faidx = pysam.FastaFile(fasta)
     singletons = set(faidx.references)
@@ -151,16 +147,15 @@ def batch2clusters(fasta, identity, overlap, threads, maxindel, log=sys.stderr, 
         with open(clusterfn, "w") as out:
             for q in cluster:
                 out.write(">%s\n%s\n"%(q, faidx[q]))
+        #isoforms += get_clusters(clusterfn, identity, overlap, threads, maxindel)        
         clusterfnames.append(clusterfn)
-        # get longest
-        #isoforms += get_clusters(clusterfn, identity, overlap, threads, maxindel)
     outclusters.close()
         
     # get longest
     p = Pool(threads)
-    for _i in p.imap_unordered(worker2, [(fn, identity, overlap, 1, maxindel) for fn in clusterfnames]):
+    for _i in p.imap_unordered(worker2, [(fn, identity, overlap, 1, maxindel) for fn in clusterfnames]): #, chunksize=10
         isoforms += _i
-    
+    p.close()
     with open("%s.singletons.fa"%fasta, "w") as out:
         for q in singletons:
             out.write(">%s\n%s\n"%(q, faidx[q]))
@@ -193,10 +188,6 @@ def fastq_parser(handle):
     if len(data)==4:
         yield data[:2]
 
-def worker(args):
-    fn, identity, overlap, threads, maxindel = args
-    batch2clusters(fn, identity, overlap, threads, maxindel)
-        
 def process_in_batches(outdir, fasta, identity, overlap, threads, maxindel, maxseq=1000000, log=sys.stderr):
     """Process reads in batches"""
     handle = open(fasta)
@@ -223,16 +214,7 @@ def process_in_batches(outdir, fasta, identity, overlap, threads, maxindel, maxs
     # process all reads
     for fn in fastas:
         batch2clusters(fn, identity, overlap, threads, maxindel)
-    '''
-    if len(fastas)<2:
-        # use all threads locally if only 1 batch
-        for fn in fastas:
-            batch2clusters(fn, identity, overlap, threads, maxindel)
-    else:
-        p = Pool(threads)
-        for fn in p.imap_unordered(worker, [(fn, identity, overlap, 1, maxindel) for fn in fastas]):
-            pass
-    '''
+
     outfn = "%s/batches.transcripts.fa"%outdir
     os.system("cat %s/batches/*/reads.fa.transcripts.fa > %s"%(outdir, outfn))
     return outfn
@@ -328,7 +310,7 @@ def main():
     parser.add_argument("-i", "--maxindel", default=20, type=int, help="max allowed indel [%(default)s]")
     parser.add_argument("--identity", default=0.50, type=float, help="min. identity [%(default)s]")
     parser.add_argument("--overlap", default=0.95, type=float, help="min. overlap [%(default)s]")
-    parser.add_argument("-m", "--maxseq", default=100000, type=float, help="max no. of seq in batch [%(default)s]")
+    parser.add_argument("-m", "--maxseq", default=500000, type=float, help="max no. of seq in batch [%(default)s]")
     #parser.add_argument("--test", action='store_true', help="test run")
     
     # print help if no parameters
