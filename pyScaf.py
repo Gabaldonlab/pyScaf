@@ -13,7 +13,7 @@ Warsaw, 12/03/2016
 """
 
 import math, os, sys
-import commands, resource, subprocess
+import subprocess, resource, subprocess
 from datetime import datetime
 from FastaIndex import FastaIndex
 
@@ -110,14 +110,14 @@ class Graph(object):
         
     def __str__(self):
         """Produce string representation of the graph"""
-        out = '%s\n%s contigs: %s\n\n%s links:\n' % (self.name, len(self.contigs), self.contigs.keys()[:self.printlimit], self.ilinks)
+        out = '%s\n%s contigs: %s\n\n%s links:\n' % (self.name, len(self.contigs), list(self.contigs.keys())[:self.printlimit], self.ilinks)
         i = 0
         for ref1 in sorted(self.contigs, key=lambda x: self.contigs[x], reverse=1):
             for end1 in range(2):
                 '''if not self.links[ref1][end1]:
                     continue
                 ref2, end2, links, gap = self.links[ref1][end1]'''
-                for (ref2, end2), (links, gap) in self.links[ref1][end1].items():
+                for (ref2, end2), (links, gap) in list(self.links[ref1][end1].items()):
                     # skip if v2 longer than v1
                     if self.contigs[ref1] < self.contigs[ref2]:
                         continue
@@ -192,7 +192,7 @@ class Graph(object):
             for c in scaffold:
                 added.add(c)
         # add contigs that were not scaffolded
-        for contig in filter(lambda x: x not in added, self.seq):
+        for contig in [x for x in self.seq if x not in added]:
             name = "unscaffolded.%s"%contig
             seq = self.seq.get_sequence(contig)
             out.write(self._format_fasta(name, seq))
@@ -276,7 +276,7 @@ class Graph(object):
         #ref, end, links, gap = links
         ## there may be many connections now, but only one is processed so far!!!
         #print links
-        links_sorted = sorted(links.iteritems(), key=lambda x: x[1][0], reverse=1)
+        links_sorted = sorted(iter(links.items()), key=lambda x: x[1][0], reverse=1)
         if len(links_sorted)>1:
             self.logger(" multi connections: %s %s\n"%(scaffold, links), 0)
         (ref, end), (links, gap) = links_sorted[0]
@@ -324,7 +324,7 @@ class ReadGraph(Graph):
         self._init_storage(genome)
         # alignment options
         self.mapq  = mapq
-        self.limit = load * sum(self.contigs.itervalues())
+        self.limit = load * sum(self.contigs.values())
         # scaffolding parameters
         self.ratio    = ratio
         self.minlinks = minlinks
@@ -342,7 +342,7 @@ class ReadGraph(Graph):
     def show(self):
         """Produce string representation of the graph"""
         # header
-        out = '%s\n%s contigs: %s\n\n%s links' % (self.name, len(self.contigs), self.contigs.keys()[:self.printlimit], self.ireadlinks)
+        out = '%s\n%s contigs: %s\n\n%s links' % (self.name, len(self.contigs), list(self.contigs.keys())[:self.printlimit], self.ireadlinks)
         i = 0
         for ref1 in sorted(self.contigs, key=lambda x: self.contigs[x], reverse=1):
             for end1 in range(2):
@@ -504,13 +504,13 @@ class ReadGraph(Graph):
                 alllinks[mpos] = [(c, e, pos)]
                 continue
             # sort by distance #filter(lambda x: abs(x-mpos)<maxdist, alllinks)
-            closest = sorted(alllinks.keys(), key=lambda x: abs(x-mpos))[0]
+            closest = sorted(list(alllinks.keys()), key=lambda x: abs(x-mpos))[0]
             if abs(closest-mpos)<maxdist:
                 alllinks[closest].append((c, e, pos))
             else:
                 alllinks[mpos] = [(c, e, pos)]
         
-        for mpos, links in alllinks.items():
+        for mpos, links in list(alllinks.items()):
             yield links
         
     def _select_links(self, links): 
@@ -592,7 +592,7 @@ class ReadGraph(Graph):
             for end1 in range(2):
                 if not self.links[ref1][end1]:
                     continue
-                for (ref2, end2), (links, gap) in self.links[ref1][end1].items(): 
+                for (ref2, end2), (links, gap) in list(self.links[ref1][end1].items()): 
                     if not (ref1, end1) in self.links[ref2][end2]:
                         # remove link and update counter
                         #self.logger("Removing connection %s -> %s\n"%(str((ref1, end1)), str((ref2, end2))), 0)
@@ -659,7 +659,7 @@ class LongReadGraph(Graph):
         """Set maxgap to 0.01 of assembly size, 0.01 of assembly size"""
         # set to 0.01 of assembly size
         if not maxgap:
-            maxgap = int(round(frac * sum(self.contigs.itervalues())))
+            maxgap = int(round(frac * sum(self.contigs.values())))
         # check if big enough
         if maxgap < min_maxgap:
             maxgap = min_maxgap
@@ -678,7 +678,7 @@ class LongReadGraph(Graph):
                 continue
             # unpack
             (score, t, tstart, talg, tstrand, tsize, q, qstart, qalg, qstrand, qsize, blocks) = l.split()[:12]
-            (score, qstart, qalg, qsize, tstart, talg, tsize) = map(int, (score, qstart, qalg, qsize, tstart, talg, tsize))
+            (score, qstart, qalg, qsize, tstart, talg, tsize) = list(map(int, (score, qstart, qalg, qsize, tstart, talg, tsize)))
             if q not in q2hits:
                 q2hits[q] = []
                 q2size[q]  = qsize
@@ -733,7 +733,7 @@ class LongReadGraph(Graph):
         - mixed alignments ie c1, c2, c1, c2
         - clearly wrong alignment ie c1s - c2s
         """
-        for q in q2hits.keys():
+        for q in list(q2hits.keys()):
             qsize, hits = q2size[q], q2hits[q]
             
             # check if more than 2 contigs aligned
@@ -818,7 +818,7 @@ class LongReadGraph(Graph):
         """Combine longlinks into links"""
         for ref1 in self.longlinks:
             for end1, data in enumerate(self.longlinks[ref1]):
-                for (ref2, end2), gaps in data.iteritems():
+                for (ref2, end2), gaps in data.items():
                     if ref1 > ref2:
                         continue
                     links = len(gaps)
@@ -897,7 +897,7 @@ class SyntenyGraph(Graph):
         """Set maxgap to 0.01 of assembly size, 0.01 of assembly size"""
         # set to 0.01 of assembly size
         if not maxgap:
-            maxgap = int(round(frac * sum(self.contigs.itervalues())))
+            maxgap = int(round(frac * sum(self.contigs.values())))
         # check if big enough
         if maxgap < min_maxgap:
             maxgap = min_maxgap
@@ -908,7 +908,7 @@ class SyntenyGraph(Graph):
     def _clean_overlaps_on_reference(self, _t2hits):
         """Remove hits that overlap on reference too much"""
         t2hits = {}
-        for t, hits in _t2hits.iteritems():
+        for t, hits in _t2hits.items():
             t2hits[t] = []
             # remove hits overlapping too much # sort by r pos
             for tstart, tend, q, qstart, qend, strand in sorted(hits):
@@ -946,7 +946,7 @@ class SyntenyGraph(Graph):
                 continue
             # unpack
             (score, t, tstart, talg, tstrand, tsize, q, qstart, qalg, qstrand, qsize, blocks) = l.split()[:12]
-            (score, qstart, qalg, qsize, tstart, talg, tsize) = map(int, (score, qstart, qalg, qsize, tstart, talg, tsize))
+            (score, qstart, qalg, qsize, tstart, talg, tsize) = list(map(int, (score, qstart, qalg, qsize, tstart, talg, tsize)))
             #get score, identity & overlap
             identity = 1.0 * score / qalg
             overlap  = 1.0 * qalg / qsize
@@ -1050,7 +1050,7 @@ class SyntenyGraph(Graph):
                 continue
             # unpack
             (score, t, tstart, talg, tstrand, tsize, q, qstart, qalg, qstrand, qsize, blocks) = l.split()[:12]
-            (score, qstart, qalg, qsize, tstart, talg, tsize) = map(int, (score, qstart, qalg, qsize, tstart, talg, tsize))
+            (score, qstart, qalg, qsize, tstart, talg, tsize) = list(map(int, (score, qstart, qalg, qsize, tstart, talg, tsize)))
             # prepare storage
             if t not in t2hits:
                 t2hits[t] = {q: []}
@@ -1131,7 +1131,7 @@ class SyntenyGraph(Graph):
                 added.update(scaffold)
                 
         # add missing
-        for c in filter(lambda x: x not in added, self.contigs):
+        for c in [x for x in self.contigs if x not in added]:
             self.scaffolds.append([(c,),(0,),[]])
 
 def _check_executable(cmd):
@@ -1143,13 +1143,13 @@ def _check_dependencies(dependencies):
     """Return error if wrong software version"""
     warning = 0
     info = "[WARNING] Old version of %s: %s. Update to version %s+!\n"
-    for cmd, version in dependencies.iteritems():
+    for cmd, version in dependencies.items():
         out = _check_executable(cmd)
         if "not found" in out:
             warning = 1
             sys.stderr.write("[ERROR] %s\n"%out)
         elif version:
-            out = commands.getoutput("%s --version"%cmd)
+            out = subprocess.getoutput("%s --version"%cmd)
             curver = out.split()[-1]
             if not curver.isdigit():
                 warning = 1

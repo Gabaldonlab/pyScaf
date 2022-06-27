@@ -7,7 +7,7 @@ l.p.pryszcz+git@gmail.com
 Warsaw, 13/06/2017
 """
 
-import os, sys, gzip, commands, resource, subprocess
+import os, sys, gzip, subprocess, resource, subprocess
 import numpy as np
 from datetime import datetime
 from FastaIndex import FastaIndex
@@ -54,7 +54,7 @@ def get_hits(fasta, ref, identity, overlap, norearrangements, protein):
             continue
         # unpack
         (score, t, tstart, talg, tstrand, tsize, q, qstart, qalg, qstrand, qsize, blocks) = l.split()[:12]
-        (score, qstart, qalg, qsize, tstart, talg, tsize) = map(int, (score, qstart, qalg, qsize, tstart, talg, tsize))
+        (score, qstart, qalg, qsize, tstart, talg, tsize) = list(map(int, (score, qstart, qalg, qsize, tstart, talg, tsize)))
         # filter by identity and overlap
         _identity = 1.0 * score / qalg
         if _identity < identity:# or _overlap < overlap:
@@ -85,7 +85,7 @@ def get_hits(fasta, ref, identity, overlap, norearrangements, protein):
     # populate t2hits only with best q2t hits
     for q in q2hits:
         # get t with highest score
-        t, (score, algs) = sorted(q2hits[q].iteritems(), key=lambda x: x[1][0], reverse=1)[0]
+        t, (score, algs) = sorted(iter(q2hits[q].items()), key=lambda x: x[1][0], reverse=1)[0]
         # check q overlap
         qsize = algs[0][5]
         _overlap  = 1.0 * sum(x[4]-x[3] for x in algs) / qsize
@@ -162,7 +162,7 @@ def scaffold_transcripts(fasta, ref, out, threads, \
     t2hits, t2size = get_hits(fasta, ref, identity, overlap, norearrangements, protein)
 
     i = k = 0
-    for i, (t, algs) in enumerate(t2hits.iteritems(), 1):
+    for i, (t, algs) in enumerate(iter(t2hits.items()), 1):
         # recognise many-to-one alignements
         algs = split_many2one(sorted(algs), t2size[t])
         for _algs in algs:
@@ -170,7 +170,7 @@ def scaffold_transcripts(fasta, ref, out, threads, \
             if len(_algs)<2:
                 continue
             k += 1
-            print i, k, t, t2size[t], _algs
+            print(i, k, t, t2size[t], _algs)
 
 def main():
     import argparse
