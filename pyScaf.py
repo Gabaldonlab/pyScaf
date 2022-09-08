@@ -3,13 +3,14 @@ desc="""Perform scaffolding of contigs using information from (in this order):
 - paired-end (PE) and/or mate-pair (MP) libraries (!!!NOT IMPLEMENTED YET!!!)
 - long reads
 - synteny to reference genome
-
 More info at: https://github.com/lpryszcz/pyScaf
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
-
 Warsaw, 12/03/2016
+
+Updated to Python3 by Diego Fuentes Palacios
+Barcelona 08/18/2022
 """
 
 import math, os, sys
@@ -20,12 +21,9 @@ from FastaIndex import FastaIndex
 def percentile(N, percent, key=lambda x:x):
     """
     Find the percentile of a list of values. 
-
     @parameter N - is a list of values. Note N MUST BE already sorted.
     @parameter percent - a float value from 0.0 to 1.0.
-
     @return - the percentile of the values
-
     From http://code.activestate.com/recipes/511478-finding-the-percentile-of-the-values/
     """
     if not N:
@@ -70,7 +68,6 @@ def pstdev(data):
 class Graph(object):
     """Graph class to represent scaffolds. It shouldn't be invoked directly,
     rather use its children: PairedGraph or SyntenyGraph.
-
     import pyScaf as ps
     
     #####
@@ -79,7 +76,6 @@ class Graph(object):
     s.add_library(fastq, name="lib1", isize=600, stdev=100, orientation="FR"); print s
     s.add_library(fastq, name="lib2", isize=5000, stdev=1000, orientation="FR"); print s
     s.save(out=open(fasta+".scaffolds.fa", "w"))
-
     
     ######
     # Reference-based scaffolding
@@ -269,7 +265,6 @@ class Graph(object):
     # SCAFFOLDING PART
     def _populate_scaffold(self, links, pend, sid, scaffold, orientations, gaps, porientation):
         """Add links to scaffold representation. Experimental!
-
         !!!Plenty of work needed here!!!
         """
         # self.links[ref1][end1][(ref2, end2)] = (links, gap)
@@ -444,7 +439,6 @@ class ReadGraph(Graph):
             
     def load_from_SAM(self, handle):
         """Populate graph with readlinks from SAM file.
-
         Note, SAM file has to be ordered by read name, F read always before R.
         Multiple alignments are allowed, but only the first (assuming best)
         alignment is taken into accound. 
@@ -474,7 +468,6 @@ class ReadGraph(Graph):
         
     def _get_major_link(self, links, c1, end1):
         """Return major readlink if any of the links full fill quality criteria.
-
         So far this is too simplistic!
         It works for PE, but for MP you need to allow for multi-joins, 
         as many contigs will be shorter than i.e. 5kb insert... 
@@ -493,7 +486,6 @@ class ReadGraph(Graph):
 
     def _cluster_links(self, links, maxdist=200):
         """Merge readlinks from the same regions. Experimental!
-
         !!!Plenty of work needed here!!!
         """
         alllinks = {}
@@ -671,8 +663,9 @@ class LongReadGraph(Graph):
         """Resolve & report scaffolds"""
         # maybe instead of last-split, get longest, non-overlapping matches here
         q2hits, q2size = {}, {}
-        for l in self._lastal(): # open('contigs.reduced.fa.tab7'): #
+        for le in self._lastal(): # open('contigs.reduced.fa.tab7'): #
             # strip leading spaces
+            l = le.decode("utf-8")
             l = l.lstrip()        
             if l.startswith('#'):
                 continue
@@ -726,7 +719,6 @@ class LongReadGraph(Graph):
         
     def _hits2longlinks(self, q2hits, q2size, score=0):
         """Filter alignments and populate links.
-
         Skip: 
         - long reads aligning to only one contig
         - check read overlap
@@ -935,7 +927,8 @@ class SyntenyGraph(Graph):
         t2hits = {}
         t2size = {}
         q2hits = {}
-        for l in self._lastal_global():
+        for le in self._lastal_global():
+            l = le.decode("utf-8")
             if dotplot:
                 try:
                     dotplot.stdin.write(l)
@@ -1037,8 +1030,9 @@ class SyntenyGraph(Graph):
         ## to facilitate more input formats
         t2hits, t2size = {}, {}
         q2hits = {}
-        for l in self._lastal(self.genome):
+        for le in self._lastal(self.genome):
             # strip leading spaces
+            l = le.decode("utf-8")
             l = l.lstrip()
             if dotplot:
                 try:
