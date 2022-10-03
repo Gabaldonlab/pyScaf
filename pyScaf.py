@@ -210,6 +210,29 @@ class Graph(object):
             proc = subprocess.Popen(args, stdin=self._lastal(query), stderr=self.log)
         return proc
 
+    def _minimap2(self, queries=[]):
+        """Minimap2 for long read alignment using presets"""
+
+        #Provide necessary arguments:
+        if not queries:
+            queries = self.fastq
+        # convert filename to list of filenames
+        if type(queries) is str:
+            queries = [queries, ]
+        args0 = ["cat", ] + queries
+        if queries[0].endswith('.gz'):
+            args0[0] = "zcat"
+        proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stderr=sys.stderr)
+        args1 = ["minimap2", "-x", self.preset, "-t", str(self.threads), self.ref, "-"]
+        #proc0.wait()
+        proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
+        args2 = ["k8-Linux", "misc/paftools.js", "view", "-f", "maf", "-"]
+        #proc1.wait()
+        proc2 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
+        #proc2.wait()
+        return proc2.stdout
+        #./minimap2 -ax map-pb ref.fa pacbio.fq.gz >
+
     def _lastal(self, queries=[]):
         """Start LAST in local mode and with FastQ input (-Q 1)."""
         # build db
@@ -622,7 +645,7 @@ class ReadGraph(Graph):
 
 class LongReadGraph(Graph):
     """Graph class to represent scaffolds derived from long read information"""
-    def __init__(self, genome, fastq, identity=0.51, overlap=0.66, norearrangements=0, 
+    def __init__(self, genome, fastq, identity=0.51, overlap=0.66, preset="map-ont", useminimap2=0, norearrangements=0, 
                  threads=4, dotplot="png", mingap=15, maxgap=0, printlimit=10, log=sys.stderr):
         """Construct a graph with the given vertices & features"""
         self.name = "ReferenceGraph"
@@ -635,6 +658,9 @@ class LongReadGraph(Graph):
         # prepare storage
         self._init_storage(genome)
         # alignment options
+        print(preset)
+        self.preset = preset
+        self.useminimap2 = useminimap2
         self.identity = identity
         self.overlap  = overlap
         self.threads  = threads
@@ -663,11 +689,19 @@ class LongReadGraph(Graph):
         """Resolve & report scaffolds"""
         # maybe instead of last-split, get longest, non-overlapping matches here
         q2hits, q2size = {}, {}
-        for le in self._lastal(): # open('contigs.reduced.fa.tab7'): #
+        #Add minimap processing
+
+        if self.useminimap2:
+            handle = self._minimap2
+        else:
+            handle = self._lastal
+        #for le in self._lastal(): # open('contigs.reduced.fa.tab7'): #
+        for le in handle():
             # strip leading spaces
             l = le.decode("utf-8")
-            l = l.lstrip()        
-            if l.startswith('#'):
+            l = l.lstrip()
+            #print(l)
+            if l.startswith('#') or l.startswith('@'):
                 continue
             # unpack
             (score, t, tstart, talg, tstrand, tsize, q, qstart, qalg, qstrand, qsize, blocks) = l.split()[:12]
@@ -1190,6 +1224,9 @@ def main():
     scaf = parser.add_argument_group('long read-based scaffolding options (EXPERIMENTAL!)')
     scaf.add_argument("-n", "--longreads", nargs="+",
                       help="FastQ/FastA file(s) with PacBio/ONT reads")
+    scaf.add_argument("--useminimap2", action='store_true', help="Use Minimap2 for aligning long reads. By default LAST.")
+    scaf.add_argument("-p", "--preset", default="map-ont", type=str,
+                      help="Minimap2 preset for PacBio/ONT reads. Possible values map-ont[default], map-pb and map-hifi")
     
     scaf = parser.add_argument_group('NGS-based scaffolding options (!NOT IMPLEMENTED!)')
     scaf.add_argument("-i", "--fastq", nargs="+",
@@ -1242,7 +1279,7 @@ def main():
     # perform scaffolding using long reads
     if o.longreads:
         s = LongReadGraph(fasta, o.longreads, identity=o.identity, overlap=o.overlap, \
-                          maxgap=o.maxgap, threads=o.threads, dotplot=o.dotplot, 
+                          preset= o.preset, useminimap2= o.useminimap2, maxgap=o.maxgap, threads=o.threads, dotplot=o.dotplot, 
                           norearrangements=o.norearrangements, log=log)
         # save output
         s.save(out)
