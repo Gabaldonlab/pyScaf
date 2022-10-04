@@ -223,15 +223,15 @@ class Graph(object):
         if queries[0].endswith('.gz'):
             args0[0] = "zcat"
         proc0 = subprocess.Popen(args0, stdout=subprocess.PIPE, stderr=sys.stderr)
-        args1 = ["minimap2", "-x", self.preset, "-t", str(self.threads), self.ref, "-"]
-        #proc0.wait()
+        args1 = ["minimap2", "-x", self.preset, "-t", str(self.threads), "--cs=long", self.ref, "-"]
         proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
-        args2 = ["k8-Linux", "misc/paftools.js", "view", "-f", "maf", "-"]
-        #proc1.wait()
-        proc2 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
-        #proc2.wait()
-        return proc2.stdout
-        #./minimap2 -ax map-pb ref.fa pacbio.fq.gz >
+        args2 = ["k8-Linux", "bin/minimap2/misc/paftools.js", "view", "-f", "maf", "-"]
+        proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
+
+        #Added maf converter from LAST to keep same format
+        args3 = ["maf-convert", "tab", "-"]
+        proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=sys.stderr)
+        return proc3.stdout
 
     def _lastal(self, queries=[]):
         """Start LAST in local mode and with FastQ input (-Q 1)."""
@@ -658,6 +658,7 @@ class LongReadGraph(Graph):
         # prepare storage
         self._init_storage(genome)
         # alignment options
+
         self.preset = preset
         self.useminimap2 = useminimap2
         self.identity = identity
@@ -688,8 +689,8 @@ class LongReadGraph(Graph):
         """Resolve & report scaffolds"""
         # maybe instead of last-split, get longest, non-overlapping matches here
         q2hits, q2size = {}, {}
-        #Add minimap processing
 
+        #Add minimap processing
         if self.useminimap2:
             handle = self._minimap2
         else:
@@ -699,9 +700,10 @@ class LongReadGraph(Graph):
             # strip leading spaces
             l = le.decode("utf-8")
             l = l.lstrip()
-            #print(l)
+            
             if l.startswith('#') or l.startswith('@'):
                 continue
+
             # unpack
             (score, t, tstart, talg, tstrand, tsize, q, qstart, qalg, qstrand, qsize, blocks) = l.split()[:12]
             (score, qstart, qalg, qsize, tstart, talg, tsize) = list(map(int, (score, qstart, qalg, qsize, tstart, talg, tsize)))
