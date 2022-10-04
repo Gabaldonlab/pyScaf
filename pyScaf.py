@@ -658,7 +658,6 @@ class LongReadGraph(Graph):
         # prepare storage
         self._init_storage(genome)
         # alignment options
-        print(preset)
         self.preset = preset
         self.useminimap2 = useminimap2
         self.identity = identity
