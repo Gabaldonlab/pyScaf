@@ -14,9 +14,11 @@ Barcelona 08/18/2022
 """
 
 import math, os, sys
+from re import T
 import subprocess, resource, subprocess
 from datetime import datetime
 from FastaIndex import FastaIndex
+
 
 def percentile(N, percent, key=lambda x:x):
     """
@@ -227,7 +229,6 @@ class Graph(object):
         proc1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stdin=proc0.stdout, stderr=sys.stderr)
         args2 = ["k8-Linux", "bin/minimap2/misc/paftools.js", "view", "-f", "maf", "-"]
         proc2 = subprocess.Popen(args2, stdout=subprocess.PIPE, stdin=proc1.stdout, stderr=sys.stderr)
-
         #Added maf converter from LAST to keep same format
         args3 = ["maf-convert", "tab", "-"]
         proc3 = subprocess.Popen(args3, stdout=subprocess.PIPE, stdin=proc2.stdout, stderr=sys.stderr)
@@ -891,7 +892,7 @@ class LongReadGraph(Graph):
             
 class SyntenyGraph(Graph):
     """Graph class to represent scaffolds derived from synteny information"""
-    def __init__(self, genome, reference, identity=0.51, overlap=0.66, norearrangements=0, 
+    def __init__(self, genome, reference, identity=0.51, overlap=0.66, preset="asm10", useminimap2=0, norearrangements=0, 
                  threads=4, mingap=15, maxgap=0, nofilter_overlaps=0, 
                  dotplot="png", printlimit=10, log=sys.stderr):
         """Construct a graph with the given vertices & features"""
@@ -910,6 +911,8 @@ class SyntenyGraph(Graph):
         self.overlap  = overlap
         self.threads  = threads
         self.dotplot  = dotplot
+        self.useminimap2 = useminimap2
+        self.preset = preset
         # 0-local alignment; 
         if norearrangements:
             # 1-global/overlap - simpler and faster
@@ -962,7 +965,11 @@ class SyntenyGraph(Graph):
         t2hits = {}
         t2size = {}
         q2hits = {}
-        for le in self._lastal_global():
+        if self.useminimap2:
+            handle = self._minimap2()
+        else:
+            handle = self._lastal_global()
+        for le in handle:
             l = le.decode("utf-8")
             if dotplot:
                 try:
@@ -978,10 +985,9 @@ class SyntenyGraph(Graph):
             #get score, identity & overlap
             identity = 1.0 * score / qalg
             overlap  = 1.0 * qalg / qsize
-            #filter by identity and overlap
+            #filter by identity and overlap.
             if identity < self.identity or overlap < self.overlap:
                 continue
-            # keep only best match to ref for each q
             if q in q2hits:
                 pt, pscore = q2hits[q]
                 # skip if worse score
@@ -1033,15 +1039,17 @@ class SyntenyGraph(Graph):
             for q in t2hits[t]:
                 # sort by r pos
                 hits = self._get_best_global_match(sorted(t2hits[t][q]))
+                #print(hits)
                 #get score, identity & overlap
                 score = sum(x[-1] for x in hits)
                 qalg  = sum(x[4] for x in hits)
                 identity = 1.0 * score / qalg # this local identity in hits ignoring gaps
                 overlap  = 1.0 * qalg / self.contigs[q]
-                #filter by identity and overlap
+
+                #filter by identity and overlap. 
                 if identity < self.identity or overlap < self.overlap:
                     continue
-                # get global start & end
+
                 ## this needs work and bulletproofing!!!
                 tstart = hits[0][0]
                 tend   = hits[-1][0] + hits[-1][1]
@@ -1052,7 +1060,6 @@ class SyntenyGraph(Graph):
                 # get strand correctly - by majority voting
                 strand = int(round(1.0 * sum(x[4]*x[5] for x in hits) / qalg))
                 t2hits2[t].append((tstart, tend, q, qstart, qend, strand))
-                #print t, tstart, tend, q, qstart, qend, strand, len(t2hits[t][q]), identity, overlap
                 
         return t2hits2
         
@@ -1065,7 +1072,11 @@ class SyntenyGraph(Graph):
         ## to facilitate more input formats
         t2hits, t2size = {}, {}
         q2hits = {}
-        for le in self._lastal(self.genome):
+        if self.useminimap2:
+            handle = self._minimap2(self.genome)
+        else:
+            handle = self._lastal(self.genome)
+        for le in handle:
             # strip leading spaces
             l = le.decode("utf-8")
             l = l.lstrip()
@@ -1096,8 +1107,11 @@ class SyntenyGraph(Graph):
                 qstart = qsize - qstart - qalg
             t2hits[t][q].append((tstart, talg, q, qstart, qalg, strand, score))
             q2hits[q].append((qstart, qalg, strand, t, tstart, talg))
+        
+        #tstart, tend, q, qstart, qend, strand
 
         # get simplified global alignments
+
         t2hits = self._calculate_global_algs(t2hits)
         #for t, hits in t2hits.iteritems(): print t, hits
 
@@ -1226,8 +1240,8 @@ def main():
     scaf.add_argument("-n", "--longreads", nargs="+",
                       help="FastQ/FastA file(s) with PacBio/ONT reads")
     scaf.add_argument("--useminimap2", action='store_true', help="Use Minimap2 for aligning long reads. By default LAST.")
-    scaf.add_argument("-p", "--preset", default="map-ont", type=str,
-                      help="Minimap2 preset for PacBio/ONT reads. Possible values map-ont[default], map-pb and map-hifi")
+    scaf.add_argument("-p", "--preset", type=str,
+                      help="Minimap2 preset for PacBio/ONT reads or ref mapping. Possible values map-ont[default], map-pb and map-hifi. For ref mapping: asm5, asm10[default], asm20.")
     
     scaf = parser.add_argument_group('NGS-based scaffolding options (!NOT IMPLEMENTED!)')
     scaf.add_argument("-i", "--fastq", nargs="+",
